@@ -1,0 +1,477 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>Seguimiento Intervención</title>
+<style>
+  :root {
+    --bg: #f4f4f2;
+    --surface: #ffffff;
+    --border: #e3e1db;
+    --text: #1c1c1a;
+    --text-secondary: #6b6a63;
+    --text-muted: #9b9a92;
+    --accent: #185fa5;
+    --accent-bg: #e6f1fb;
+    --radius: 10px;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    -webkit-tap-highlight-color: transparent;
+  }
+  .app { max-width: 480px; margin: 0 auto; padding: 12px 12px 60px; }
+
+  .tabs { display: flex; gap: 6px; margin-bottom: 14px; position: sticky; top: 0; background: var(--bg); padding: 8px 0; z-index: 5; }
+  .tab-btn {
+    flex: 1; padding: 9px 4px; font-size: 12.5px; border-radius: var(--radius);
+    border: 1px solid var(--border); background: var(--surface); color: var(--text-secondary);
+    cursor: pointer; text-align: center;
+  }
+  .tab-btn.active { border-color: var(--accent); background: var(--accent-bg); color: var(--accent); font-weight: 600; }
+
+  .date-header { font-size: 12px; color: var(--text-muted); margin: 18px 2px 6px; text-transform: capitalize; }
+  .date-header:first-of-type { margin-top: 0; }
+
+  .card { border: 1px solid var(--border); border-radius: 12px; background: var(--surface); margin-bottom: 8px; overflow: hidden; }
+  .card-summary { display: flex; align-items: center; gap: 10px; padding: 11px; cursor: pointer; }
+  .check { width: 18px; height: 18px; flex-shrink: 0; }
+  .card.checked { opacity: 0.55; }
+  .card.checked .card-name { text-decoration: line-through; }
+  .reorder { display: flex; flex-direction: column; gap: 1px; flex-shrink: 0; }
+  .reorder button { border: none; background: none; padding: 2px 4px; font-size: 10px; line-height: 1; color: var(--text-muted); cursor: pointer; }
+  .reorder button:disabled { opacity: 0.25; cursor: default; }
+  .avatar {
+    width: 34px; height: 34px; border-radius: 50%; background: var(--accent-bg); color: var(--accent);
+    display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 600; flex-shrink: 0;
+  }
+  .card-summary-text { flex: 1; min-width: 0; }
+  .card-name { font-size: 14px; font-weight: 600; }
+  .card-sub { font-size: 12px; color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .chev { font-size: 13px; color: var(--text-muted); transition: transform 0.15s; }
+  .card.open .chev { transform: rotate(180deg); }
+
+  .card-detail { display: none; padding: 0 11px 11px; font-size: 13px; }
+  .card.open .card-detail { display: block; }
+  .detail-row { border-top: 1px solid var(--border); padding-top: 9px; margin-bottom: 9px; }
+  .detail-row p { margin: 0 0 5px; line-height: 1.4; }
+  .detail-label { color: var(--text-secondary); }
+
+  .img-toggle { display: flex; align-items: center; gap: 6px; border-top: 1px solid var(--border); padding-top: 9px; cursor: pointer; font-size: 12px; color: var(--text-secondary); }
+  .img-toggle .chev { margin-left: auto; }
+  .img-panel { display: none; margin-top: 8px; }
+  .img-panel.open { display: block; }
+
+  .thumb-row { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px; margin-bottom: 10px; }
+  .thumb { width: 60px; height: 60px; border-radius: 8px; object-fit: cover; flex-shrink: 0; background: var(--accent-bg); }
+  .thumb-add {
+    width: 60px; height: 60px; border-radius: 8px; border: 1px dashed var(--border); flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center; color: var(--text-muted); font-size: 20px; cursor: pointer;
+  }
+
+  .link-list { display: flex; flex-direction: column; gap: 6px; border-top: 1px solid var(--border); padding-top: 9px; }
+  .link-item { font-size: 12.5px; color: var(--accent); text-decoration: none; display: flex; align-items: center; gap: 5px; }
+  .link-item .tag { margin-left: auto; font-size: 10px; color: var(--text-muted); }
+  .link-add-row { display: flex; gap: 6px; margin-top: 4px; }
+  .link-add-row input { flex: 1; font-size: 12px; padding: 6px 8px; border-radius: 6px; border: 1px solid var(--border); }
+  .link-add-row button, .thumb-add-inline { font-size: 12px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); cursor: pointer; }
+
+  .empty { text-align: center; color: var(--text-muted); font-size: 13px; padding: 30px 0; }
+  .loading { text-align: center; color: var(--text-muted); font-size: 13px; padding: 20px 0; }
+  .sentinel { height: 1px; }
+
+  .gate { max-width: 320px; margin: 80px auto; padding: 0 16px; text-align: center; }
+  .gate h1 { font-size: 16px; font-weight: 600; margin-bottom: 16px; }
+  .gate input { width: 100%; font-size: 15px; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--border); margin-bottom: 10px; text-align: center; }
+  .gate button { width: 100%; font-size: 14px; padding: 10px; border-radius: 8px; border: none; background: var(--accent); color: #fff; cursor: pointer; }
+  .gate .gate-error { color: #a32d2d; font-size: 12px; margin-top: 8px; display: none; }
+</style>
+</head>
+<body>
+<div class="gate" id="gate">
+  <h1>Glance Intervención</h1>
+  <input type="password" id="gate-code" placeholder="Código de acceso" autocomplete="off">
+  <button id="gate-btn">Entrar</button>
+  <p class="gate-error" id="gate-error">Código incorrecto.</p>
+</div>
+
+<div class="app" id="app" style="display:none;">
+  <div class="tabs">
+    <button class="tab-btn" data-mode="intervenciones">Intervenciones</button>
+    <button class="tab-btn" data-mode="consulta_issste">Consulta ISSSTE</button>
+    <button class="tab-btn" data-mode="consulta_chisssmecali">Consulta ISSSTECali</button>
+  </div>
+  <div id="content"></div>
+  <div class="sentinel" id="sentinel"></div>
+</div>
+
+<script>
+// ============================= CONFIG =============================
+// Pega aquí la URL /exec de tu Web App de Apps Script una vez publicada
+const API_URL = 'https://script.google.com/macros/s/AKfycbwEjfZ8lcHxVKtTCFDKeQEMFZBiqZTsi-URF1kbRhw-aSpOggGYZACEzBwcvQTcjEoF/exec';
+
+const PAGE_SIZE = 4; // cuántos grupos de fecha se muestran por "página" del scroll
+
+let state = {
+  mode: 'intervenciones',
+  groups: [],
+  renderedCount: 0,
+};
+
+const contentEl = document.getElementById('content');
+
+document.querySelectorAll('.tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => setMode(btn.dataset.mode));
+});
+
+// ============================= GATE (PIN) =============================
+const CODE_KEY = 'glance_access_code';
+const ACTIVITY_KEY = 'glance_last_activity';
+const SESSION_TTL_MS = 8 * 60 * 60 * 1000; // 8 horas de inactividad -> vuelve a pedir el PIN
+
+const gateEl = document.getElementById('gate');
+const appEl = document.getElementById('app');
+const gateInput = document.getElementById('gate-code');
+const gateError = document.getElementById('gate-error');
+
+function getCode() { return localStorage.getItem(CODE_KEY) || ''; }
+
+function touchActivity() { localStorage.setItem(ACTIVITY_KEY, String(Date.now())); }
+
+function sessionExpired() {
+  const last = Number(localStorage.getItem(ACTIVITY_KEY) || 0);
+  return (Date.now() - last) > SESSION_TTL_MS;
+}
+
+function showApp() {
+  touchActivity();
+  gateEl.style.display = 'none';
+  appEl.style.display = 'block';
+  setMode('intervenciones');
+}
+
+document.getElementById('gate-btn').addEventListener('click', tryEnter);
+gateInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') tryEnter(); });
+
+function tryEnter() {
+  const code = gateInput.value.trim();
+  if (!code) return;
+  localStorage.setItem(CODE_KEY, code);
+  gateError.style.display = 'none';
+  showApp();
+}
+
+function rejectCode(message) {
+  localStorage.removeItem(CODE_KEY);
+  localStorage.removeItem(ACTIVITY_KEY);
+  appEl.style.display = 'none';
+  gateEl.style.display = 'block';
+  gateError.textContent = message || 'Código incorrecto.';
+  gateError.style.display = 'block';
+  gateInput.value = '';
+}
+
+// Marca actividad con cualquier toque dentro de la app (mantiene viva la sesión mientras la usas)
+appEl.addEventListener('click', touchActivity);
+
+// Al abrir: si hay código guardado y no han pasado 8h de inactividad, entra directo.
+// Si pasaron 8h, se pide el PIN de nuevo (sin borrar nada más, solo re-autentica).
+if (getCode() && !sessionExpired()) {
+  showApp();
+} else if (getCode() && sessionExpired()) {
+  rejectCode('Sesión expirada por inactividad. Ingresa tu código.');
+}
+
+function setMode(mode) {
+  state.mode = mode;
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
+  loadMode(mode);
+}
+
+async function loadMode(mode) {
+  contentEl.innerHTML = '<div class="loading">Cargando…</div>';
+  try {
+    const res = await fetch(API_URL + '?mode=' + encodeURIComponent(mode) + '&code=' + encodeURIComponent(getCode()));
+    const data = await res.json();
+    if (data.error === 'codigo_invalido') { rejectCode(); return; }
+    if (!data.ok) throw new Error(data.error || 'Error desconocido');
+    state.groups = data.groups || [];
+    state.renderedCount = 0;
+    renderNextPage();
+  } catch (err) {
+    contentEl.innerHTML = '<div class="empty">No se pudo cargar. ' + escapeHtml(String(err)) + '</div>';
+  }
+}
+
+function renderNextPage() {
+  const toShow = state.groups.slice(state.renderedCount, state.renderedCount + PAGE_SIZE);
+  if (state.renderedCount === 0) contentEl.innerHTML = '';
+  if (state.groups.length === 0) {
+    contentEl.innerHTML = '<div class="empty">No hay pacientes en esta vista.</div>';
+    return;
+  }
+  toShow.forEach(group => {
+    const header = document.createElement('div');
+    header.className = 'date-header';
+    header.textContent = formatDateLabel(group.date);
+    contentEl.appendChild(header);
+
+    const groupWrap = document.createElement('div');
+    groupWrap.dataset.date = group.date;
+    contentEl.appendChild(groupWrap);
+
+    const patients = applyOrder(group.date, group.patients);
+    patients.forEach(p => groupWrap.appendChild(renderCard(p, group.date, groupWrap)));
+  });
+  state.renderedCount += toShow.length;
+}
+
+// ============================= CHECKLIST Y ORDEN (localStorage) =============================
+function cardKey(date, p) { return p.id ? p.id : (date + '|' + (p.nombre || '')); }
+
+function getCheckedSet() {
+  try { return JSON.parse(localStorage.getItem('glance_checked') || '{}'); } catch (e) { return {}; }
+}
+function setCheckedFlag(key, val) {
+  const s = getCheckedSet();
+  if (val) s[key] = true; else delete s[key];
+  localStorage.setItem('glance_checked', JSON.stringify(s));
+}
+
+function getOrder(date) {
+  try { return JSON.parse(localStorage.getItem('glance_order_' + date) || 'null'); } catch (e) { return null; }
+}
+function persistGroupOrder(groupWrap) {
+  const keys = Array.from(groupWrap.children).map(el => el.dataset.key);
+  localStorage.setItem('glance_order_' + groupWrap.dataset.date, JSON.stringify(keys));
+}
+function applyOrder(date, patients) {
+  const order = getOrder(date);
+  if (!order) return patients;
+  const byKey = {};
+  patients.forEach(p => { byKey[cardKey(date, p)] = p; });
+  const ordered = [];
+  order.forEach(k => { if (byKey[k]) { ordered.push(byKey[k]); delete byKey[k]; } });
+  Object.keys(byKey).forEach(k => ordered.push(byKey[k])); // pacientes nuevos que no estaban en el orden guardado
+  return ordered;
+}
+function moveCard(card, groupWrap, dir) {
+  const sibling = dir === 'up' ? card.previousElementSibling : card.nextElementSibling;
+  if (!sibling) return;
+  if (dir === 'up') groupWrap.insertBefore(card, sibling);
+  else groupWrap.insertBefore(sibling, card);
+  persistGroupOrder(groupWrap);
+}
+
+// Carga más grupos cuando el sentinel entra en pantalla (scroll infinito)
+const observer = new IntersectionObserver(entries => {
+  if (entries[0].isIntersecting) renderNextPage();
+}, { rootMargin: '200px' });
+observer.observe(document.getElementById('sentinel'));
+
+function renderCard(p, date, groupWrap) {
+  const card = document.createElement('div');
+  card.className = 'card';
+  const key = cardKey(date, p);
+  card.dataset.key = key;
+  if (getCheckedSet()[key]) card.classList.add('checked');
+
+  const initials = (p.nombre || '?').split(' ').filter(Boolean).slice(0, 2).map(w => w[0]).join('').toUpperCase();
+  const sub = p.procedimiento ? p.procedimiento : 'Pendiente de valorar';
+
+  card.innerHTML = `
+    <div class="card-summary">
+      <input type="checkbox" class="check" ${getCheckedSet()[key] ? 'checked' : ''}>
+      <div class="avatar">${initials}</div>
+      <div class="card-summary-text">
+        <div class="card-name">${escapeHtml(p.nombre)}${p.edad ? ', ' + escapeHtml(String(p.edad)) : ''}</div>
+        <div class="card-sub">${escapeHtml(sub)}</div>
+      </div>
+      <div class="reorder">
+        <button type="button" data-dir="up">▲</button>
+        <button type="button" data-dir="down">▼</button>
+      </div>
+      <div class="chev">▾</div>
+    </div>
+    <div class="card-detail">
+      <div class="detail-row">
+        <p><span class="detail-label">ID</span> — ${escapeHtml(p.id || '—')}</p>
+        ${p.mainPathology ? `<p><span class="detail-label">Patología</span> — ${escapeHtml(p.mainPathology)}</p>` : ''}
+        <p><span class="detail-label">Antecedentes</span> — ${escapeHtml(p.antecedentes || '—')}</p>
+        <p><span class="detail-label">Comentario</span> — ${escapeHtml(p.comentario || '—')}</p>
+      </div>
+      <div class="img-toggle">
+        <span>Imágenes</span>
+        <span class="chev">▾</span>
+      </div>
+      <div class="img-panel"></div>
+    </div>
+  `;
+
+  card.querySelector('.card-summary').addEventListener('click', () => {
+    card.classList.toggle('open');
+  });
+
+  const checkbox = card.querySelector('.check');
+  checkbox.addEventListener('click', (e) => {
+    e.stopPropagation();
+    setCheckedFlag(key, checkbox.checked);
+    card.classList.toggle('checked', checkbox.checked);
+  });
+
+  card.querySelectorAll('.reorder button').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      moveCard(card, groupWrap, btn.dataset.dir);
+    });
+  });
+
+  const imgToggle = card.querySelector('.img-toggle');
+  const imgPanel = card.querySelector('.img-panel');
+  let imgPanelBuilt = false;
+  imgToggle.addEventListener('click', (e) => {
+    e.stopPropagation();
+    imgPanel.classList.toggle('open');
+    imgToggle.querySelector('.chev').style.transform = imgPanel.classList.contains('open') ? 'rotate(180deg)' : '';
+    if (!imgPanelBuilt) { buildImgPanel(imgPanel, p); imgPanelBuilt = true; }
+  });
+
+  return card;
+}
+
+function buildImgPanel(panel, p) {
+  const thumbRow = document.createElement('div');
+  thumbRow.className = 'thumb-row';
+
+  (p.imagenes || []).forEach(img => {
+    const im = document.createElement('img');
+    im.className = 'thumb';
+    im.src = img.thumbUrl;
+    im.addEventListener('click', () => window.open(img.fullUrl, '_blank'));
+    thumbRow.appendChild(im);
+  });
+
+  const addTile = document.createElement('div');
+  addTile.className = 'thumb-add';
+  addTile.textContent = '+';
+  const fileInput = document.createElement('input');
+  fileInput.type = 'file';
+  fileInput.accept = 'image/*';
+  fileInput.capture = 'environment'; // en celular ofrece cámara directo; en laptop abre el explorador normal
+  fileInput.style.display = 'none';
+  addTile.addEventListener('click', () => fileInput.click());
+  fileInput.addEventListener('change', () => handleImageUpload(fileInput, p, thumbRow, addTile));
+
+  thumbRow.appendChild(addTile);
+  thumbRow.appendChild(fileInput);
+  panel.appendChild(thumbRow);
+
+  const linkList = document.createElement('div');
+  linkList.className = 'link-list';
+
+  if (p.dicomLinkSheet) {
+    linkList.appendChild(makeLinkEl(p.dicomLinkSheet, 'DICOM viewer', 'sheet'));
+  }
+  (p.links || []).forEach(l => linkList.appendChild(makeLinkEl(l.url, l.label || l.url, l.origen || '')));
+
+  const addRow = document.createElement('div');
+  addRow.className = 'link-add-row';
+  addRow.innerHTML = `<input type="text" placeholder="Pega un link…"><button>Agregar</button>`;
+  const input = addRow.querySelector('input');
+  const btn = addRow.querySelector('button');
+  btn.addEventListener('click', () => handleAddLink(input, p, linkList));
+
+  panel.appendChild(linkList);
+  panel.appendChild(addRow);
+}
+
+function makeLinkEl(url, label, tag) {
+  const a = document.createElement('a');
+  a.className = 'link-item';
+  a.href = url;
+  a.target = '_blank';
+  a.innerHTML = `↗ ${escapeHtml(label)} ${tag ? `<span class="tag">${escapeHtml(tag)}</span>` : ''}`;
+  return a;
+}
+
+async function handleImageUpload(fileInput, p, thumbRow, addTile) {
+  const file = fileInput.files[0];
+  if (!file) return;
+  addTile.textContent = '…';
+  try {
+    const base64 = await fileToBase64(file);
+    const res = await fetch(API_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' }, // evita preflight CORS
+      body: JSON.stringify({
+        action: 'upload_image',
+        code: getCode(),
+        patientId: p.id,
+        filename: file.name,
+        mimeType: file.type,
+        base64: base64,
+      }),
+    });
+    const data = await res.json();
+    if (data.error === 'codigo_invalido' || data.error === 'No autorizado') { rejectCode(); return; }
+    if (!data.ok) throw new Error(data.error);
+    const im = document.createElement('img');
+    im.className = 'thumb';
+    im.src = data.thumbUrl;
+    im.addEventListener('click', () => window.open(data.fullUrl, '_blank'));
+    thumbRow.insertBefore(im, addTile);
+  } catch (err) {
+    alert('No se pudo subir la imagen: ' + err);
+  } finally {
+    addTile.textContent = '+';
+    fileInput.value = '';
+  }
+}
+
+async function handleAddLink(input, p, linkList) {
+  const url = input.value.trim();
+  if (!url) return;
+  try {
+    const res = await fetch(API_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({ action: 'add_link', code: getCode(), patientId: p.id, url: url }),
+    });
+    const data = await res.json();
+    if (data.error === 'codigo_invalido' || data.error === 'No autorizado') { rejectCode(); return; }
+    if (!data.ok) throw new Error(data.error);
+    linkList.appendChild(makeLinkEl(url, url, 'app'));
+    input.value = '';
+  } catch (err) {
+    alert('No se pudo agregar el link: ' + err);
+  }
+}
+
+function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result.split(',')[1]);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+function formatDateLabel(dateStr) {
+  if (dateStr === 'sin-fecha') return 'Sin fecha';
+  const d = new Date(dateStr + 'T00:00:00');
+  if (isNaN(d)) return dateStr;
+  return d.toLocaleDateString('es-MX', { weekday: 'long', day: 'numeric', month: 'long' });
+}
+
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str == null ? '' : str;
+  return div.innerHTML;
+}
+</script>
+</body>
+</html>
