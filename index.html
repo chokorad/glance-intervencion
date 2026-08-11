@@ -36,6 +36,7 @@
   }
   .tabs.secondary .tab-btn { padding: 7px 4px; font-size: 12px; }
   .tab-btn.active { border-color: var(--accent); background: var(--accent-bg); color: var(--accent); font-weight: 600; }
+  .cache-note { font-size: 10.5px; color: var(--text-muted); margin: 0; text-align: right; }
 
   .date-header { font-size: 12px; color: var(--text-muted); margin: 18px 2px 6px; text-transform: capitalize; }
   .date-header:first-of-type { margin-top: 0; }
@@ -83,6 +84,9 @@
   .link-add-row input { flex: 1; font-size: 12px; padding: 6px 8px; border-radius: 6px; border: 1px solid var(--border); }
   .link-add-row button, .thumb-add-inline { font-size: 12px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); cursor: pointer; }
 
+  .nota-input { width: 100%; min-height: 50px; font-size: 12.5px; font-family: inherit; padding: 6px 8px; border-radius: 6px; border: 1px solid var(--border); resize: vertical; margin-top: 3px; }
+  .nota-saved { font-size: 10px; color: var(--text-muted); opacity: 0; transition: opacity 0.2s; }
+  .nota-saved.show { opacity: 1; }
   .empty { text-align: center; color: var(--text-muted); font-size: 13px; padding: 30px 0; }
   .loading { text-align: center; color: var(--text-muted); font-size: 13px; padding: 20px 0; }
   .sentinel { height: 1px; }
@@ -111,7 +115,9 @@
     <div class="tabs secondary">
       <button class="tab-btn" data-institucion="issste">ISSSTE</button>
       <button class="tab-btn" data-institucion="chisssmecali">ISSSTECali</button>
+      <button class="tab-btn" id="refresh-btn" title="Actualizar" style="flex:0 0 40px;">↻</button>
     </div>
+    <p class="cache-note" id="cache-note"></p>
   </div>
   <div id="content"></div>
   <div class="sentinel" id="sentinel"></div>
@@ -129,6 +135,7 @@ let state = {
   institucion: 'issste',
   groups: [],
   renderedCount: 0,
+  cache: {},
 };
 
 const contentEl = document.getElementById('content');
@@ -139,11 +146,53 @@ document.querySelectorAll('[data-primary]').forEach(btn => {
 document.querySelectorAll('[data-institucion]').forEach(btn => {
   btn.addEventListener('click', () => { state.institucion = btn.dataset.institucion; onModeChange(); });
 });
+document.getElementById('refresh-btn').addEventListener('click', (e) => {
+  e.stopPropagation();
+  fetchMode(state.primary + '_' + state.institucion);
+});
+
+// ============================= CACHE (evita recargar por red al cambiar de tab) =============================
+const CACHE_PREFIX = 'glance_data_';
+
+function getCachedGroups(mode) {
+  if (state.cache[mode]) return state.cache[mode];
+  try {
+    const raw = localStorage.getItem(CACHE_PREFIX + mode);
+    if (raw) { state.cache[mode] = JSON.parse(raw); return state.cache[mode]; }
+  } catch (e) {}
+  return null;
+}
+function setCachedGroups(mode, groups) {
+  const entry = { groups: groups, ts: Date.now() };
+  state.cache[mode] = entry;
+  try { localStorage.setItem(CACHE_PREFIX + mode, JSON.stringify(entry)); } catch (e) {}
+}
+function showCacheNote(ts) {
+  const note = document.getElementById('cache-note');
+  if (!ts) { note.textContent = ''; return; }
+  const mins = Math.round((Date.now() - ts) / 60000);
+  note.textContent = mins < 1 ? 'Actualizado hace instantes' : ('Actualizado hace ' + mins + ' min · ↻ para refrescar');
+}
 
 function onModeChange() {
   document.querySelectorAll('[data-primary]').forEach(b => b.classList.toggle('active', b.dataset.primary === state.primary));
   document.querySelectorAll('[data-institucion]').forEach(b => b.classList.toggle('active', b.dataset.institucion === state.institucion));
-  loadMode(state.primary + '_' + state.institucion);
+  const mode = state.primary + '_' + state.institucion;
+  const cached = getCachedGroups(mode);
+  if (cached) {
+    renderGroups(cached.groups);
+    showCacheNote(cached.ts);
+  } else {
+    fetchMode(mode);
+  }
+}
+
+// Trae las otras 3 vistas en segundo plano (sin bloquear ni mostrar "Cargando") para que
+// ya estén listas si la conexión falla más tarde durante la consulta.
+function prefetchOtherModes() {
+  const all = ['consulta_issste', 'consulta_chisssmecali', 'intervenciones_issste', 'intervenciones_chisssmecali'];
+  const current = state.primary + '_' + state.institucion;
+  all.forEach(m => { if (m !== current && !getCachedGroups(m)) fetchMode(m, true); });
 }
 
 // ============================= GATE (PIN) =============================
@@ -170,6 +219,7 @@ function showApp() {
   gateEl.style.display = 'none';
   appEl.style.display = 'block';
   onModeChange();
+  setTimeout(prefetchOtherModes, 1000); // deja que la vista actual cargue primero
 }
 
 document.getElementById('gate-btn').addEventListener('click', tryEnter);
@@ -204,18 +254,28 @@ if (getCode() && !sessionExpired()) {
   rejectCode('Sesión expirada por inactividad. Ingresa tu código.');
 }
 
-async function loadMode(mode) {
-  contentEl.innerHTML = '<div class="loading">Cargando…</div>';
+function renderGroups(groups) {
+  state.groups = groups || [];
+  state.renderedCount = 0;
+  renderNextPage();
+}
+
+// silent=true -> no muestra "Cargando" ni pisa lo que se ve (se usa para el prefetch en segundo plano)
+async function fetchMode(mode, silent) {
+  const isCurrent = mode === (state.primary + '_' + state.institucion);
+  if (!silent && isCurrent) contentEl.innerHTML = '<div class="loading">Cargando…</div>';
   try {
     const res = await fetch(API_URL + '?mode=' + encodeURIComponent(mode) + '&code=' + encodeURIComponent(getCode()));
     const data = await res.json();
     if (data.error === 'codigo_invalido') { rejectCode(); return; }
     if (!data.ok) throw new Error(data.error || 'Error desconocido');
-    state.groups = data.groups || [];
-    state.renderedCount = 0;
-    renderNextPage();
+    setCachedGroups(mode, data.groups || []);
+    if (mode === (state.primary + '_' + state.institucion)) {
+      renderGroups(data.groups || []);
+      showCacheNote(Date.now());
+    }
   } catch (err) {
-    contentEl.innerHTML = '<div class="empty">No se pudo cargar. ' + escapeHtml(String(err)) + '</div>';
+    if (!silent && isCurrent) contentEl.innerHTML = '<div class="empty">No se pudo cargar. ' + escapeHtml(String(err)) + '</div>';
   }
 }
 
@@ -315,6 +375,9 @@ function renderCard(p, date, groupWrap) {
         ${p.mainPathology ? `<p><span class="detail-label">Patología</span> — ${escapeHtml(p.mainPathology)}</p>` : ''}
         <p><span class="detail-label">Antecedentes</span> — ${escapeHtml(p.antecedentes || '—')}</p>
         <p><span class="detail-label">Comentario</span> — ${escapeHtml(p.comentario || '—')}</p>
+        <p class="detail-label" style="margin-top:8px;">Nota (solo aquí, no va al sheet)</p>
+        <textarea class="nota-input" placeholder="Escribe una nota…">${escapeHtml(p.notaApp || '')}</textarea>
+        <span class="nota-saved">Guardado</span>
       </div>
       <div class="img-toggle">
         <span>Imágenes</span>
@@ -342,18 +405,50 @@ function renderCard(p, date, groupWrap) {
     });
   });
 
+  const notaInput = card.querySelector('.nota-input');
+  const notaSaved = card.querySelector('.nota-saved');
+  notaInput.addEventListener('click', (e) => e.stopPropagation());
+  notaInput.addEventListener('blur', () => handleSaveNote(notaInput, notaSaved, p));
+
   const imgToggle = card.querySelector('.img-toggle');
   const imgPanel = card.querySelector('.img-panel');
   let imgPanelBuilt = false;
   imgToggle.addEventListener('click', (e) => {
     e.stopPropagation();
+    const opening = !imgPanel.classList.contains('open');
     imgPanel.classList.toggle('open');
-    imgToggle.querySelector('.chev').style.transform = imgPanel.classList.contains('open') ? 'rotate(180deg)' : '';
+    imgToggle.querySelector('.chev').style.transform = opening ? 'rotate(180deg)' : '';
     if (!imgPanelBuilt) { buildImgPanel(imgPanel, p); imgPanelBuilt = true; }
+    if (opening) {
+      // Marca este paciente como "activo" para poder pegar un screenshot con Ctrl+V
+      activeUploadCtx = {
+        p: p,
+        thumbRow: imgPanel.querySelector('.thumb-row'),
+        addTile: imgPanel.querySelector('.thumb-add'),
+      };
+    } else if (activeUploadCtx && activeUploadCtx.p === p) {
+      activeUploadCtx = null;
+    }
   });
 
   return card;
 }
+
+// ============================= PEGAR SCREENSHOT (Ctrl+V) DESDE LA PC =============================
+// Abre el toggle de "Imágenes" de un paciente y luego Ctrl+V con un screenshot en el portapapeles.
+let activeUploadCtx = null;
+window.addEventListener('paste', (e) => {
+  if (!activeUploadCtx) return;
+  const items = (e.clipboardData || window.clipboardData).items;
+  for (const item of items) {
+    if (item.type.indexOf('image') === 0) {
+      const file = item.getAsFile();
+      handleImageUploadFile(file, activeUploadCtx.p, activeUploadCtx.thumbRow, activeUploadCtx.addTile);
+      e.preventDefault();
+      break;
+    }
+  }
+});
 
 function buildImgPanel(panel, p) {
   const thumbRow = document.createElement('div');
@@ -376,7 +471,11 @@ function buildImgPanel(panel, p) {
   fileInput.capture = 'environment'; // en celular ofrece cámara directo; en laptop abre el explorador normal
   fileInput.style.display = 'none';
   addTile.addEventListener('click', () => fileInput.click());
-  fileInput.addEventListener('change', () => handleImageUpload(fileInput, p, thumbRow, addTile));
+  fileInput.addEventListener('change', () => {
+    const file = fileInput.files[0];
+    if (file) handleImageUploadFile(file, p, thumbRow, addTile);
+    fileInput.value = '';
+  });
 
   thumbRow.appendChild(addTile);
   thumbRow.appendChild(fileInput);
@@ -401,6 +500,26 @@ function buildImgPanel(panel, p) {
   panel.appendChild(addRow);
 }
 
+async function handleSaveNote(input, savedLabel, p) {
+  const nota = input.value;
+  if (nota === (p.notaApp || '')) return; // no cambió, no gastes una llamada
+  try {
+    const res = await fetch(API_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({ action: 'save_note', code: getCode(), patientId: p.id, nota: nota }),
+    });
+    const data = await res.json();
+    if (data.error === 'codigo_invalido' || data.error === 'No autorizado') { rejectCode(); return; }
+    if (!data.ok) throw new Error(data.error);
+    p.notaApp = nota;
+    savedLabel.classList.add('show');
+    setTimeout(() => savedLabel.classList.remove('show'), 1500);
+  } catch (err) {
+    alert('No se pudo guardar la nota: ' + err);
+  }
+}
+
 function makeLinkEl(url, label, tag) {
   const a = document.createElement('a');
   a.className = 'link-item';
@@ -410,9 +529,8 @@ function makeLinkEl(url, label, tag) {
   return a;
 }
 
-async function handleImageUpload(fileInput, p, thumbRow, addTile) {
-  const file = fileInput.files[0];
-  if (!file) return;
+async function handleImageUploadFile(file, p, thumbRow, addTile) {
+  if (!file || !p || !thumbRow || !addTile) return;
   addTile.textContent = '…';
   try {
     const base64 = await fileToBase64(file);
@@ -440,7 +558,6 @@ async function handleImageUpload(fileInput, p, thumbRow, addTile) {
     alert('No se pudo subir la imagen: ' + err);
   } finally {
     addTile.textContent = '+';
-    fileInput.value = '';
   }
 }
 
