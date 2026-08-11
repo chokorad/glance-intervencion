@@ -107,6 +107,26 @@
   .gate input { width: 100%; font-size: 15px; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--border); margin-bottom: 10px; text-align: center; }
   .gate button { width: 100%; font-size: 14px; padding: 10px; border-radius: 8px; border: none; background: var(--accent); color: #fff; cursor: pointer; }
   .gate .gate-error { color: #a32d2d; font-size: 12px; margin-top: 8px; display: none; }
+
+  .layout { display: none; flex-direction: column; gap: 20px; max-width: 820px; margin: 0 auto; align-items: center; }
+  .sidebar { display: block; width: 100%; max-width: 480px; flex-shrink: 0; padding: 0 12px; }
+  @media (min-width: 900px) {
+    .layout { flex-direction: row; align-items: flex-start; }
+    .sidebar { width: 280px; max-width: 280px; position: sticky; top: 12px; padding: 12px 0 0; }
+  }
+  .sidebar-card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 12px; }
+  @media (min-width: 900px) { .sidebar-card { max-height: 80vh; overflow-y: auto; } }
+  .sidebar-title { font-size: 13px; font-weight: 600; margin: 0 0 8px; }
+  .sidebar-toggle { display: flex; gap: 4px; margin-bottom: 10px; }
+  .sidebar-toggle button { flex: 1; font-size: 11px; padding: 5px 2px; border-radius: 6px; border: 1px solid var(--border); background: transparent; color: var(--text-secondary); cursor: pointer; }
+  .sidebar-toggle button.active { border-color: var(--accent); background: var(--accent-bg); color: var(--accent); font-weight: 600; }
+  .sidebar-date { font-size: 10.5px; color: var(--text-muted); margin: 10px 0 4px; }
+  .sidebar-date:first-of-type { margin-top: 0; }
+  .sidebar-row { padding: 5px 0; border-top: 1px solid var(--border); }
+  .sidebar-row:first-of-type { border-top: none; }
+  .sidebar-name { display: block; font-size: 12px; font-weight: 500; }
+  .sidebar-proc { display: block; font-size: 11px; color: var(--text-secondary); }
+  .sidebar-empty { font-size: 12px; color: var(--text-muted); }
 </style>
 </head>
 <body>
@@ -117,7 +137,8 @@
   <p class="gate-error" id="gate-error">Código incorrecto.</p>
 </div>
 
-<div class="app" id="app" style="display:none;">
+<div class="layout" id="layout">
+<div class="app" id="app">
   <div class="tabs-wrap">
     <div class="tabs">
       <button class="tab-btn" data-primary="consulta">Consulta</button>
@@ -133,6 +154,18 @@
   <div id="content"></div>
   <div class="sentinel" id="sentinel"></div>
 </div>
+
+<div class="sidebar" id="sidebar">
+  <div class="sidebar-card">
+    <p class="sidebar-title">Upcoming</p>
+    <div class="sidebar-toggle">
+      <button data-inst="issste" class="active">ISSSTE</button>
+      <button data-inst="chisssmecali">ISSSTECali</button>
+    </div>
+    <div id="sidebar-list"><p class="sidebar-empty">Cargando…</p></div>
+  </div>
+</div>
+</div>
 <div class="version-tag" id="version-tag"></div>
 <div class="paste-toast" id="paste-toast"></div>
 
@@ -143,7 +176,7 @@ const API_URL = 'https://script.google.com/macros/s/AKfycbwEjfZ8lcHxVKtTCFDKeQEM
 
 // Súbelo cada vez que edites este archivo, así el numerito de abajo a la derecha
 // te dice si el navegador ya tiene la versión que acabas de subir a GitHub Pages.
-const APP_VERSION = '2026-08-11.1';
+const APP_VERSION = '2026-08-11.4';
 document.getElementById('version-tag').textContent = 'v' + APP_VERSION;
 
 const PAGE_SIZE = 4; // cuántos grupos de fecha se muestran por "página" del scroll
@@ -185,6 +218,12 @@ function setCachedGroups(mode, groups) {
   state.cache[mode] = entry;
   try { localStorage.setItem(CACHE_PREFIX + mode, JSON.stringify(entry)); } catch (e) {}
 }
+// Vuelve a guardar el estado actual en caché (memoria + localStorage) tras un cambio local
+// (checkbox / reorden), para que un refresh de página no se vea "revertido" antes del próximo fetch.
+function touchCacheForCurrentMode() {
+  setCachedGroups(state.primary + '_' + state.institucion, state.groups);
+}
+
 function showCacheNote(ts) {
   const note = document.getElementById('cache-note');
   if (!ts) { note.textContent = ''; return; }
@@ -219,7 +258,7 @@ const ACTIVITY_KEY = 'glance_last_activity';
 const SESSION_TTL_MS = 8 * 60 * 60 * 1000; // 8 horas de inactividad -> vuelve a pedir el PIN
 
 const gateEl = document.getElementById('gate');
-const appEl = document.getElementById('app');
+const layoutEl = document.getElementById('layout');
 const gateInput = document.getElementById('gate-code');
 const gateError = document.getElementById('gate-error');
 
@@ -235,8 +274,9 @@ function sessionExpired() {
 function showApp() {
   touchActivity();
   gateEl.style.display = 'none';
-  appEl.style.display = 'block';
+  layoutEl.style.display = 'flex';
   onModeChange();
+  renderSidebar(); // pinta lo que ya haya en caché de inmediato
   setTimeout(prefetchOtherModes, 1000); // deja que la vista actual cargue primero
 }
 
@@ -254,7 +294,7 @@ function tryEnter() {
 function rejectCode(message) {
   localStorage.removeItem(CODE_KEY);
   localStorage.removeItem(ACTIVITY_KEY);
-  appEl.style.display = 'none';
+  layoutEl.style.display = 'none';
   gateEl.style.display = 'block';
   gateError.textContent = message || 'Código incorrecto.';
   gateError.style.display = 'block';
@@ -262,7 +302,7 @@ function rejectCode(message) {
 }
 
 // Marca actividad con cualquier toque dentro de la app (mantiene viva la sesión mientras la usas)
-appEl.addEventListener('click', touchActivity);
+layoutEl.addEventListener('click', touchActivity);
 
 // Al abrir: si hay código guardado y no han pasado 8h de inactividad, entra directo.
 // Si pasaron 8h, se pide el PIN de nuevo (sin borrar nada más, solo re-autentica).
@@ -292,10 +332,50 @@ async function fetchMode(mode, silent) {
       renderGroups(data.groups || []);
       showCacheNote(Date.now());
     }
+    if (mode === 'intervenciones_' + sidebarInst) renderSidebar();
   } catch (err) {
     if (!silent && isCurrent) contentEl.innerHTML = '<div class="empty">No se pudo cargar. ' + escapeHtml(String(err)) + '</div>';
   }
 }
+
+// ============================= SIDEBAR "UPCOMING" (siempre visible en pantallas anchas) =============================
+let sidebarInst = 'issste';
+
+function renderSidebar() {
+  const mode = 'intervenciones_' + sidebarInst;
+  const cached = getCachedGroups(mode);
+  const list = document.getElementById('sidebar-list');
+  if (!cached) {
+    list.innerHTML = '<p class="sidebar-empty">Cargando…</p>';
+    fetchMode(mode, true);
+    return;
+  }
+  if (!cached.groups.length) {
+    list.innerHTML = '<p class="sidebar-empty">Sin procedimientos próximos.</p>';
+    return;
+  }
+  list.innerHTML = '';
+  cached.groups.forEach(group => {
+    const h = document.createElement('p');
+    h.className = 'sidebar-date';
+    h.textContent = formatDateLabel(group.date);
+    list.appendChild(h);
+    group.patients.forEach(p => {
+      const row = document.createElement('div');
+      row.className = 'sidebar-row';
+      row.innerHTML = `<span class="sidebar-name">${escapeHtml(p.nombre)}${p.edad ? ', ' + escapeHtml(String(p.edad)) : ''}</span><span class="sidebar-proc">${escapeHtml(p.procedimiento || '')}</span>`;
+      list.appendChild(row);
+    });
+  });
+}
+
+document.querySelectorAll('#sidebar [data-inst]').forEach(btn => {
+  btn.addEventListener('click', () => {
+    sidebarInst = btn.dataset.inst;
+    document.querySelectorAll('#sidebar [data-inst]').forEach(b => b.classList.toggle('active', b.dataset.inst === sidebarInst));
+    renderSidebar();
+  });
+});
 
 function renderNextPage() {
   const toShow = state.groups.slice(state.renderedCount, state.renderedCount + PAGE_SIZE);
@@ -314,47 +394,49 @@ function renderNextPage() {
     groupWrap.dataset.date = group.date;
     contentEl.appendChild(groupWrap);
 
-    const patients = applyOrder(group.date, group.patients);
-    patients.forEach(p => groupWrap.appendChild(renderCard(p, group.date, groupWrap)));
+    group.patients.forEach(p => groupWrap.appendChild(renderCard(p, group.date, groupWrap)));
   });
   state.renderedCount += toShow.length;
 }
 
-// ============================= CHECKLIST Y ORDEN (localStorage) =============================
+// ============================= CHECKLIST Y ORDEN (guardado en el servidor — sobrevive cerrar la pestaña) =============================
 function cardKey(date, p) { return p.id ? p.id : (date + '|' + (p.nombre || '')); }
 
-function getCheckedSet() {
-  try { return JSON.parse(localStorage.getItem('glance_checked') || '{}'); } catch (e) { return {}; }
-}
-function setCheckedFlag(key, val) {
-  const s = getCheckedSet();
-  if (val) s[key] = true; else delete s[key];
-  localStorage.setItem('glance_checked', JSON.stringify(s));
+function setVisto(p, visto) {
+  fetch(API_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+    body: JSON.stringify({ action: 'set_estado', code: getCode(), patientId: p.id, visto: visto }),
+  }).catch(() => showToast('No se pudo guardar (sin conexión). Vuelve a marcarlo cuando regrese el internet.', true));
 }
 
-function getOrder(date) {
-  try { return JSON.parse(localStorage.getItem('glance_order_' + date) || 'null'); } catch (e) { return null; }
-}
 function persistGroupOrder(groupWrap) {
-  const keys = Array.from(groupWrap.children).map(el => el.dataset.key);
-  localStorage.setItem('glance_order_' + groupWrap.dataset.date, JSON.stringify(keys));
+  const ids = Array.from(groupWrap.children).map(el => el.dataset.key).filter(Boolean);
+  fetch(API_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+    body: JSON.stringify({ action: 'set_orden', code: getCode(), ids: ids }),
+  }).catch(() => showToast('No se pudo guardar el orden (sin conexión).', true));
 }
-function applyOrder(date, patients) {
-  const order = getOrder(date);
-  if (!order) return patients;
-  const byKey = {};
-  patients.forEach(p => { byKey[cardKey(date, p)] = p; });
-  const ordered = [];
-  order.forEach(k => { if (byKey[k]) { ordered.push(byKey[k]); delete byKey[k]; } });
-  Object.keys(byKey).forEach(k => ordered.push(byKey[k])); // pacientes nuevos que no estaban en el orden guardado
-  return ordered;
-}
+
 function moveCard(card, groupWrap, dir) {
   const sibling = dir === 'up' ? card.previousElementSibling : card.nextElementSibling;
   if (!sibling) return;
   if (dir === 'up') groupWrap.insertBefore(card, sibling);
   else groupWrap.insertBefore(sibling, card);
   persistGroupOrder(groupWrap);
+  syncGroupOrderInState(groupWrap); // así el caché en memoria también refleja el nuevo orden
+  touchCacheForCurrentMode();
+}
+
+function syncGroupOrderInState(groupWrap) {
+  const date = groupWrap.dataset.date;
+  const group = state.groups.find(g => g.date === date);
+  if (!group) return;
+  const byKey = {};
+  group.patients.forEach(p => { byKey[cardKey(date, p)] = p; });
+  const ordered = Array.from(groupWrap.children).map(el => byKey[el.dataset.key]).filter(Boolean);
+  if (ordered.length === group.patients.length) group.patients = ordered;
 }
 
 // Carga más grupos cuando el sentinel entra en pantalla (scroll infinito)
@@ -368,14 +450,14 @@ function renderCard(p, date, groupWrap) {
   card.className = 'card';
   const key = cardKey(date, p);
   card.dataset.key = key;
-  if (getCheckedSet()[key]) card.classList.add('checked');
+  if (p.visto) card.classList.add('checked');
 
   const initials = (p.nombre || '?').split(' ').filter(Boolean).slice(0, 2).map(w => w[0]).join('').toUpperCase();
   const sub = p.procedimiento ? p.procedimiento : 'Pendiente de valorar';
 
   card.innerHTML = `
     <div class="card-summary">
-      <input type="checkbox" class="check" ${getCheckedSet()[key] ? 'checked' : ''}>
+      <input type="checkbox" class="check" ${p.visto ? 'checked' : ''}>
       <div class="avatar">${initials}</div>
       <div class="card-summary-text">
         <div class="card-name">${escapeHtml(p.nombre)}${p.edad ? ', ' + escapeHtml(String(p.edad)) : ''}</div>
@@ -412,8 +494,10 @@ function renderCard(p, date, groupWrap) {
   const checkbox = card.querySelector('.check');
   checkbox.addEventListener('click', (e) => {
     e.stopPropagation();
-    setCheckedFlag(key, checkbox.checked);
+    p.visto = checkbox.checked;
+    setVisto(p, checkbox.checked);
     card.classList.toggle('checked', checkbox.checked);
+    touchCacheForCurrentMode();
   });
 
   card.querySelectorAll('.reorder button').forEach(btn => {
@@ -552,6 +636,7 @@ async function handleSaveNote(input, savedLabel, p) {
     if (data.error === 'codigo_invalido' || data.error === 'No autorizado') { rejectCode(); return; }
     if (!data.ok) throw new Error(data.error);
     p.notaApp = nota;
+    touchCacheForCurrentMode();
     savedLabel.classList.add('show');
     setTimeout(() => savedLabel.classList.remove('show'), 1500);
   } catch (err) {
@@ -593,6 +678,8 @@ async function handleImageUploadFile(file, p, thumbRow, addTile) {
     im.src = data.thumbUrl;
     im.addEventListener('click', () => window.open(data.fullUrl, '_blank'));
     thumbRow.insertBefore(im, addTile);
+    p.imagenes = (p.imagenes || []).concat([{ thumbUrl: data.thumbUrl, fullUrl: data.fullUrl, origen: 'app' }]);
+    touchCacheForCurrentMode();
     showToast('Imagen subida ✓');
   } catch (err) {
     showToast('Error al subir la imagen: ' + err, true);
@@ -614,6 +701,8 @@ async function handleAddLink(input, p, linkList) {
     if (data.error === 'codigo_invalido' || data.error === 'No autorizado') { rejectCode(); return; }
     if (!data.ok) throw new Error(data.error);
     linkList.appendChild(makeLinkEl(url, url, 'app'));
+    p.links = (p.links || []).concat([{ url: url, label: url, origen: 'app' }]);
+    touchCacheForCurrentMode();
     input.value = '';
   } catch (err) {
     alert('No se pudo agregar el link: ' + err);
