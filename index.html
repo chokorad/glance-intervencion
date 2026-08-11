@@ -26,12 +26,15 @@
   }
   .app { max-width: 480px; margin: 0 auto; padding: 12px 12px 60px; }
 
-  .tabs { display: flex; gap: 6px; margin-bottom: 14px; position: sticky; top: 0; background: var(--bg); padding: 8px 0; z-index: 5; }
+  .tabs-wrap { position: sticky; top: 0; background: var(--bg); padding: 8px 0 4px; z-index: 5; }
+  .tabs { display: flex; gap: 6px; margin-bottom: 6px; }
+  .tabs.secondary { margin-bottom: 14px; }
   .tab-btn {
     flex: 1; padding: 9px 4px; font-size: 12.5px; border-radius: var(--radius);
     border: 1px solid var(--border); background: var(--surface); color: var(--text-secondary);
     cursor: pointer; text-align: center;
   }
+  .tabs.secondary .tab-btn { padding: 7px 4px; font-size: 12px; }
   .tab-btn.active { border-color: var(--accent); background: var(--accent-bg); color: var(--accent); font-weight: 600; }
 
   .date-header { font-size: 12px; color: var(--text-muted); margin: 18px 2px 6px; text-transform: capitalize; }
@@ -100,10 +103,15 @@
 </div>
 
 <div class="app" id="app" style="display:none;">
-  <div class="tabs">
-    <button class="tab-btn" data-mode="intervenciones">Intervenciones</button>
-    <button class="tab-btn" data-mode="consulta_issste">Consulta ISSSTE</button>
-    <button class="tab-btn" data-mode="consulta_chisssmecali">Consulta ISSSTECali</button>
+  <div class="tabs-wrap">
+    <div class="tabs">
+      <button class="tab-btn" data-primary="consulta">Consulta</button>
+      <button class="tab-btn" data-primary="intervenciones">Intervenciones</button>
+    </div>
+    <div class="tabs secondary">
+      <button class="tab-btn" data-institucion="issste">ISSSTE</button>
+      <button class="tab-btn" data-institucion="chisssmecali">ISSSTECali</button>
+    </div>
   </div>
   <div id="content"></div>
   <div class="sentinel" id="sentinel"></div>
@@ -117,16 +125,26 @@ const API_URL = 'https://script.google.com/macros/s/AKfycbwEjfZ8lcHxVKtTCFDKeQEM
 const PAGE_SIZE = 4; // cuántos grupos de fecha se muestran por "página" del scroll
 
 let state = {
-  mode: 'intervenciones',
+  primary: 'consulta',
+  institucion: 'issste',
   groups: [],
   renderedCount: 0,
 };
 
 const contentEl = document.getElementById('content');
 
-document.querySelectorAll('.tab-btn').forEach(btn => {
-  btn.addEventListener('click', () => setMode(btn.dataset.mode));
+document.querySelectorAll('[data-primary]').forEach(btn => {
+  btn.addEventListener('click', () => { state.primary = btn.dataset.primary; onModeChange(); });
 });
+document.querySelectorAll('[data-institucion]').forEach(btn => {
+  btn.addEventListener('click', () => { state.institucion = btn.dataset.institucion; onModeChange(); });
+});
+
+function onModeChange() {
+  document.querySelectorAll('[data-primary]').forEach(b => b.classList.toggle('active', b.dataset.primary === state.primary));
+  document.querySelectorAll('[data-institucion]').forEach(b => b.classList.toggle('active', b.dataset.institucion === state.institucion));
+  loadMode(state.primary + '_' + state.institucion);
+}
 
 // ============================= GATE (PIN) =============================
 const CODE_KEY = 'glance_access_code';
@@ -151,7 +169,7 @@ function showApp() {
   touchActivity();
   gateEl.style.display = 'none';
   appEl.style.display = 'block';
-  setMode('intervenciones');
+  onModeChange();
 }
 
 document.getElementById('gate-btn').addEventListener('click', tryEnter);
@@ -184,12 +202,6 @@ if (getCode() && !sessionExpired()) {
   showApp();
 } else if (getCode() && sessionExpired()) {
   rejectCode('Sesión expirada por inactividad. Ingresa tu código.');
-}
-
-function setMode(mode) {
-  state.mode = mode;
-  document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
-  loadMode(mode);
 }
 
 async function loadMode(mode) {
