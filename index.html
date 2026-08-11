@@ -37,6 +37,7 @@
   .tabs.secondary .tab-btn { padding: 7px 4px; font-size: 12px; }
   .tab-btn.active { border-color: var(--accent); background: var(--accent-bg); color: var(--accent); font-weight: 600; }
   .cache-note { font-size: 10.5px; color: var(--text-muted); margin: 0; text-align: right; }
+  .version-tag { position: fixed; bottom: 6px; right: 8px; font-size: 10px; color: var(--text-muted); opacity: 0.55; z-index: 1; }
 
   .date-header { font-size: 12px; color: var(--text-muted); margin: 18px 2px 6px; text-transform: capitalize; }
   .date-header:first-of-type { margin-top: 0; }
@@ -87,6 +88,9 @@
   .nota-input { width: 100%; min-height: 50px; font-size: 12.5px; font-family: inherit; padding: 6px 8px; border-radius: 6px; border: 1px solid var(--border); resize: vertical; margin-top: 3px; }
   .nota-saved { font-size: 10px; color: var(--text-muted); opacity: 0; transition: opacity 0.2s; }
   .nota-saved.show { opacity: 1; }
+  .img-panel { outline: none; }
+  .img-panel:focus { outline: 2px dashed var(--accent); outline-offset: 6px; border-radius: 8px; }
+  .paste-hint { font-size: 10.5px; color: var(--text-muted); margin: 4px 0 0; }
   .empty { text-align: center; color: var(--text-muted); font-size: 13px; padding: 30px 0; }
   .loading { text-align: center; color: var(--text-muted); font-size: 13px; padding: 20px 0; }
   .sentinel { height: 1px; }
@@ -122,11 +126,17 @@
   <div id="content"></div>
   <div class="sentinel" id="sentinel"></div>
 </div>
+<div class="version-tag" id="version-tag"></div>
 
 <script>
 // ============================= CONFIG =============================
 // Pega aquí la URL /exec de tu Web App de Apps Script una vez publicada
 const API_URL = 'https://script.google.com/macros/s/AKfycbwEjfZ8lcHxVKtTCFDKeQEMFZBiqZTsi-URF1kbRhw-aSpOggGYZACEzBwcvQTcjEoF/exec';
+
+// Súbelo cada vez que edites este archivo, así el numerito de abajo a la derecha
+// te dice si el navegador ya tiene la versión que acabas de subir a GitHub Pages.
+const APP_VERSION = '2026-08-10.1';
+document.getElementById('version-tag').textContent = 'v' + APP_VERSION;
 
 const PAGE_SIZE = 4; // cuántos grupos de fecha se muestran por "página" del scroll
 
@@ -383,7 +393,7 @@ function renderCard(p, date, groupWrap) {
         <span>Imágenes</span>
         <span class="chev">▾</span>
       </div>
-      <div class="img-panel"></div>
+      <div class="img-panel" tabindex="0"></div>
     </div>
   `;
 
@@ -418,37 +428,29 @@ function renderCard(p, date, groupWrap) {
     const opening = !imgPanel.classList.contains('open');
     imgPanel.classList.toggle('open');
     imgToggle.querySelector('.chev').style.transform = opening ? 'rotate(180deg)' : '';
-    if (!imgPanelBuilt) { buildImgPanel(imgPanel, p); imgPanelBuilt = true; }
-    if (opening) {
-      // Marca este paciente como "activo" para poder pegar un screenshot con Ctrl+V
-      activeUploadCtx = {
-        p: p,
-        thumbRow: imgPanel.querySelector('.thumb-row'),
-        addTile: imgPanel.querySelector('.thumb-add'),
-      };
-    } else if (activeUploadCtx && activeUploadCtx.p === p) {
-      activeUploadCtx = null;
+    if (!imgPanelBuilt) {
+      buildImgPanel(imgPanel, p);
+      imgPanelBuilt = true;
+      // Pegar (Ctrl+V) un screenshot mientras este panel tiene el foco lo sube directo —
+      // se liga al panel específico de este paciente, no a la ventana entera.
+      const thumbRow = imgPanel.querySelector('.thumb-row');
+      const addTile = imgPanel.querySelector('.thumb-add');
+      imgPanel.addEventListener('paste', (ev) => {
+        const items = (ev.clipboardData || window.clipboardData).items;
+        for (const item of items) {
+          if (item.type.indexOf('image') === 0) {
+            handleImageUploadFile(item.getAsFile(), p, thumbRow, addTile);
+            ev.preventDefault();
+            break;
+          }
+        }
+      });
     }
+    if (opening) imgPanel.focus();
   });
 
   return card;
 }
-
-// ============================= PEGAR SCREENSHOT (Ctrl+V) DESDE LA PC =============================
-// Abre el toggle de "Imágenes" de un paciente y luego Ctrl+V con un screenshot en el portapapeles.
-let activeUploadCtx = null;
-window.addEventListener('paste', (e) => {
-  if (!activeUploadCtx) return;
-  const items = (e.clipboardData || window.clipboardData).items;
-  for (const item of items) {
-    if (item.type.indexOf('image') === 0) {
-      const file = item.getAsFile();
-      handleImageUploadFile(file, activeUploadCtx.p, activeUploadCtx.thumbRow, activeUploadCtx.addTile);
-      e.preventDefault();
-      break;
-    }
-  }
-});
 
 function buildImgPanel(panel, p) {
   const thumbRow = document.createElement('div');
@@ -480,6 +482,11 @@ function buildImgPanel(panel, p) {
   thumbRow.appendChild(addTile);
   thumbRow.appendChild(fileInput);
   panel.appendChild(thumbRow);
+
+  const hint = document.createElement('p');
+  hint.className = 'paste-hint';
+  hint.textContent = 'En computadora: con este cuadro seleccionado, Ctrl+V pega un screenshot directo.';
+  panel.appendChild(hint);
 
   const linkList = document.createElement('div');
   linkList.className = 'link-list';
