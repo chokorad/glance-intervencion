@@ -120,9 +120,12 @@
   .sidebar-toggle { display: flex; gap: 4px; margin-bottom: 10px; }
   .sidebar-toggle button { flex: 1; font-size: 11px; padding: 5px 2px; border-radius: 6px; border: 1px solid var(--border); background: transparent; color: var(--text-secondary); cursor: pointer; }
   .sidebar-toggle button.active { border-color: var(--accent); background: var(--accent-bg); color: var(--accent); font-weight: 600; }
-  .sidebar-date { font-size: 10.5px; color: var(--text-muted); margin: 10px 0 4px; }
+  .sidebar-date {
+    font-size: 12px; font-weight: 700; color: var(--accent); background: var(--accent-bg);
+    padding: 5px 9px; border-radius: 6px; margin: 16px 0 8px; text-transform: capitalize;
+  }
   .sidebar-date:first-of-type { margin-top: 0; }
-  .sidebar-row { padding: 5px 0; border-top: 1px solid var(--border); }
+  .sidebar-row { padding: 6px 2px; border-top: 1px solid var(--border); }
   .sidebar-row:first-of-type { border-top: none; }
   .sidebar-name { display: block; font-size: 12px; font-weight: 500; }
   .sidebar-proc { display: block; font-size: 11px; color: var(--text-secondary); }
@@ -176,7 +179,7 @@ const API_URL = 'https://script.google.com/macros/s/AKfycbwEjfZ8lcHxVKtTCFDKeQEM
 
 // Súbelo cada vez que edites este archivo, así el numerito de abajo a la derecha
 // te dice si el navegador ya tiene la versión que acabas de subir a GitHub Pages.
-const APP_VERSION = '2026-08-11.4';
+const APP_VERSION = '2026-08-11.5';
 document.getElementById('version-tag').textContent = 'v' + APP_VERSION;
 
 const PAGE_SIZE = 4; // cuántos grupos de fecha se muestran por "página" del scroll
@@ -188,6 +191,10 @@ let state = {
   renderedCount: 0,
   cache: {},
 };
+
+// Declarado aquí arriba (no más abajo) porque showApp() puede llamar a renderSidebar()
+// de forma síncrona antes de que el script termine de correr todo lo de abajo.
+let sidebarInst = 'issste';
 
 const contentEl = document.getElementById('content');
 
@@ -339,8 +346,6 @@ async function fetchMode(mode, silent) {
 }
 
 // ============================= SIDEBAR "UPCOMING" (siempre visible en pantallas anchas) =============================
-let sidebarInst = 'issste';
-
 function renderSidebar() {
   const mode = 'intervenciones_' + sidebarInst;
   const cached = getCachedGroups(mode);
