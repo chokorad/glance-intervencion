@@ -78,6 +78,10 @@
   .img-panel { display: none; margin-top: 8px; }
   .img-panel.open { display: block; }
 
+  .hero-wrap { display: none; margin-top: 8px; }
+  .hero-wrap.has-img { display: block; }
+  .hero-img { width: 100%; max-height: 320px; object-fit: contain; background: #000; border-radius: 10px; cursor: zoom-in; display: block; }
+
   .thumb-row { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px; margin-bottom: 10px; }
   .thumb { width: 60px; height: 60px; border-radius: 8px; object-fit: cover; flex-shrink: 0; background: var(--accent-bg); }
   .thumb-add {
@@ -182,7 +186,7 @@ const API_URL = 'https://script.google.com/macros/s/AKfycbwEjfZ8lcHxVKtTCFDKeQEM
 
 // Súbelo cada vez que edites este archivo, así el numerito de abajo a la derecha
 // te dice si el navegador ya tiene la versión que acabas de subir a GitHub Pages.
-const APP_VERSION = '2026-08-11.8';
+const APP_VERSION = '2026-08-14.1';
 document.getElementById('version-tag').textContent = 'v' + APP_VERSION;
 
 const PAGE_SIZE = 4; // cuántos grupos de fecha se muestran por "página" del scroll
@@ -209,8 +213,16 @@ document.querySelectorAll('[data-institucion]').forEach(btn => {
 });
 document.getElementById('refresh-btn').addEventListener('click', (e) => {
   e.stopPropagation();
-  fetchMode(state.primary + '_' + state.institucion);
+  refreshAllModes();
 });
+
+// Refresca las 4 combinaciones (Consulta/Intervenciones x ISSSTE/ISSSTECali) de una vez,
+// no solo la que está viendo ahorita -- así al cambiar de tab ya está fresca, no solo la activa.
+function refreshAllModes() {
+  const current = state.primary + '_' + state.institucion;
+  const all = ['consulta_issste', 'consulta_chisssmecali', 'intervenciones_issste', 'intervenciones_chisssmecali'];
+  all.forEach(m => fetchMode(m, m !== current));
+}
 
 // ============================= CACHE (evita recargar por red al cambiar de tab) =============================
 const CACHE_PREFIX = 'glance_data_';
@@ -396,8 +408,7 @@ const STALE_ON_RETURN_MS = 3 * 60 * 1000;
 setInterval(() => {
   if (document.visibilityState !== 'visible') return;
   if (!getCode() || sessionExpired()) return;
-  fetchMode(state.primary + '_' + state.institucion);
-  fetchMode('intervenciones_' + sidebarInst, true);
+  refreshAllModes();
 }, AUTO_REFRESH_MS);
 
 document.addEventListener('visibilitychange', () => {
@@ -406,10 +417,7 @@ document.addEventListener('visibilitychange', () => {
   touchActivity();
   const mode = state.primary + '_' + state.institucion;
   const cached = getCachedGroups(mode);
-  if (!cached || (Date.now() - cached.ts) > STALE_ON_RETURN_MS) fetchMode(mode);
-  const sMode = 'intervenciones_' + sidebarInst;
-  const sCached = getCachedGroups(sMode);
-  if (!sCached || (Date.now() - sCached.ts) > STALE_ON_RETURN_MS) fetchMode(sMode, true);
+  if (!cached || (Date.now() - cached.ts) > STALE_ON_RETURN_MS) refreshAllModes();
 });
 
 function renderNextPage() {
@@ -514,6 +522,7 @@ function renderCard(p, date, groupWrap) {
         <textarea class="nota-input" placeholder="Escribe una nota…">${escapeHtml(p.notaApp || '')}</textarea>
         <span class="nota-saved">Guardado</span>
       </div>
+      <div class="hero-wrap"></div>
       <div class="img-toggle">
         <span>Imágenes</span>
         <span class="chev">▾</span>
@@ -521,6 +530,9 @@ function renderCard(p, date, groupWrap) {
       <div class="img-panel" tabindex="0"></div>
     </div>
   `;
+
+  const heroWrap = card.querySelector('.hero-wrap');
+  renderHeroImage(heroWrap, p); // se ve de una vez al abrir la tarjeta, sin tener que abrir "Imágenes"
 
   card.querySelector('.card-summary').addEventListener('click', () => {
     card.classList.toggle('open');
@@ -555,7 +567,7 @@ function renderCard(p, date, groupWrap) {
     const opening = !imgPanel.classList.contains('open');
     imgPanel.classList.toggle('open');
     imgToggle.querySelector('.chev').style.transform = opening ? 'rotate(180deg)' : '';
-    if (!imgPanelBuilt) { buildImgPanel(imgPanel, p); imgPanelBuilt = true; }
+    if (!imgPanelBuilt) { buildImgPanel(imgPanel, p, heroWrap); imgPanelBuilt = true; }
     if (opening) {
       imgPanel.focus();
       // "Arma" este paciente como destino del próximo Ctrl+V (ver listener global de paste)
@@ -564,6 +576,7 @@ function renderCard(p, date, groupWrap) {
         thumbRow: imgPanel.querySelector('.thumb-row'),
         addTile: imgPanel.querySelector('.thumb-add-wrap'),
         progressEl: imgPanel.querySelector('.upload-progress'),
+        heroWrap: heroWrap,
       };
     } else if (activePasteCtx && activePasteCtx.p === p) {
       activePasteCtx = null;
@@ -596,7 +609,7 @@ window.addEventListener('paste', (e) => {
     if (item.type.indexOf('image') === 0) {
       found = true;
       showToast('Imagen detectada, subiendo…');
-      handleImageUploadFile(item.getAsFile(), activePasteCtx.p, activePasteCtx.thumbRow, activePasteCtx.addTile, activePasteCtx.progressEl);
+      handleImageUploadFile(item.getAsFile(), activePasteCtx.p, activePasteCtx.thumbRow, activePasteCtx.addTile, activePasteCtx.progressEl, activePasteCtx.heroWrap);
       e.preventDefault();
       break;
     }
@@ -604,7 +617,21 @@ window.addEventListener('paste', (e) => {
   if (!found) showToast('Ctrl+V detectado, pero el portapapeles no trae una imagen.', true);
 });
 
-function buildImgPanel(panel, p) {
+// Muestra grande la primera imagen subida, arriba del toggle "Imágenes" -- así se ve
+// de inmediato al abrir la tarjeta, sin tener que además abrir el sub-toggle de imágenes.
+function renderHeroImage(heroWrap, p) {
+  heroWrap.innerHTML = '';
+  const first = (p.imagenes || [])[0];
+  if (!first) { heroWrap.classList.remove('has-img'); return; }
+  heroWrap.classList.add('has-img');
+  const img = document.createElement('img');
+  img.className = 'hero-img';
+  img.src = (first.thumbUrl || '').replace(/=w\d+$/, '=w800');
+  img.addEventListener('click', (e) => { e.stopPropagation(); window.open(first.fullUrl, '_blank'); });
+  heroWrap.appendChild(img);
+}
+
+function buildImgPanel(panel, p, heroWrap) {
   const thumbRow = document.createElement('div');
   thumbRow.className = 'thumb-row';
 
@@ -636,7 +663,7 @@ function buildImgPanel(panel, p) {
   cameraTile.addEventListener('click', () => cameraInput.click());
   cameraInput.addEventListener('change', () => {
     const file = cameraInput.files[0];
-    if (file) handleImageUploadFile(file, p, thumbRow, addWrap, progressEl);
+    if (file) handleImageUploadFile(file, p, thumbRow, addWrap, progressEl, heroWrap);
     cameraInput.value = '';
   });
 
@@ -651,7 +678,7 @@ function buildImgPanel(panel, p) {
   galleryTile.addEventListener('click', () => galleryInput.click());
   galleryInput.addEventListener('change', () => {
     const file = galleryInput.files[0];
-    if (file) handleImageUploadFile(file, p, thumbRow, addWrap, progressEl);
+    if (file) handleImageUploadFile(file, p, thumbRow, addWrap, progressEl, heroWrap);
     galleryInput.value = '';
   });
 
@@ -736,7 +763,7 @@ function postWithProgress(bodyObj, onProgress) {
   });
 }
 
-async function handleImageUploadFile(file, p, thumbRow, addTile, progressEl) {
+async function handleImageUploadFile(file, p, thumbRow, addTile, progressEl, heroWrap) {
   if (!file || !p || !thumbRow || !addTile) return;
   addTile.classList.add('busy');
   if (progressEl) progressEl.textContent = 'Preparando…';
@@ -759,6 +786,7 @@ async function handleImageUploadFile(file, p, thumbRow, addTile, progressEl) {
     im.addEventListener('click', () => window.open(data.fullUrl, '_blank'));
     thumbRow.insertBefore(im, addTile);
     p.imagenes = (p.imagenes || []).concat([{ thumbUrl: data.thumbUrl, fullUrl: data.fullUrl, origen: 'app' }]);
+    if (heroWrap) renderHeroImage(heroWrap, p); // si era la primera imagen, ahora aparece grande arriba
     touchCacheForCurrentMode();
     showToast('Imagen subida ✓');
   } catch (err) {
