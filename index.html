@@ -179,7 +179,7 @@ const API_URL = 'https://script.google.com/macros/s/AKfycbwEjfZ8lcHxVKtTCFDKeQEM
 
 // Súbelo cada vez que edites este archivo, así el numerito de abajo a la derecha
 // te dice si el navegador ya tiene la versión que acabas de subir a GitHub Pages.
-const APP_VERSION = '2026-08-11.5';
+const APP_VERSION = '2026-08-11.6';
 document.getElementById('version-tag').textContent = 'v' + APP_VERSION;
 
 const PAGE_SIZE = 4; // cuántos grupos de fecha se muestran por "página" del scroll
@@ -591,7 +591,7 @@ function buildImgPanel(panel, p) {
   const fileInput = document.createElement('input');
   fileInput.type = 'file';
   fileInput.accept = 'image/*';
-  fileInput.capture = 'environment'; // en celular ofrece cámara directo; en laptop abre el explorador normal
+  // sin "capture": así el celular muestra el picker completo (cámara o galería), no solo cámara.
   fileInput.style.display = 'none';
   addTile.addEventListener('click', () => fileInput.click());
   fileInput.addEventListener('change', () => {
