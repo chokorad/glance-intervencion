@@ -84,6 +84,9 @@
     width: 60px; height: 60px; border-radius: 8px; border: 1px dashed var(--border); flex-shrink: 0;
     display: flex; align-items: center; justify-content: center; color: var(--text-muted); font-size: 20px; cursor: pointer;
   }
+  .thumb-add-wrap { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+  .thumb-add-wrap.busy .thumb-add { pointer-events: none; opacity: 0.4; }
+  .upload-progress { font-size: 10.5px; color: var(--text-muted); white-space: nowrap; }
 
   .link-list { display: flex; flex-direction: column; gap: 6px; border-top: 1px solid var(--border); padding-top: 9px; }
   .link-item { font-size: 12.5px; color: var(--accent); text-decoration: none; display: flex; align-items: center; gap: 5px; }
@@ -179,7 +182,7 @@ const API_URL = 'https://script.google.com/macros/s/AKfycbwEjfZ8lcHxVKtTCFDKeQEM
 
 // Súbelo cada vez que edites este archivo, así el numerito de abajo a la derecha
 // te dice si el navegador ya tiene la versión que acabas de subir a GitHub Pages.
-const APP_VERSION = '2026-08-11.6';
+const APP_VERSION = '2026-08-11.8';
 document.getElementById('version-tag').textContent = 'v' + APP_VERSION;
 
 const PAGE_SIZE = 4; // cuántos grupos de fecha se muestran por "página" del scroll
@@ -382,6 +385,33 @@ document.querySelectorAll('#sidebar [data-inst]').forEach(btn => {
   });
 });
 
+// ============================= AUTO-REFRESH (cada tanto, sin ser cada 2 segundos) =============================
+// Mientras la pestaña está abierta y visible: refresca sola cada 5 min.
+// Los celulares "pausan" el JS de una pestaña en segundo plano, así que además,
+// cuando vuelves a esa pestaña (visibilitychange), si los datos ya tienen más de
+// 3 min de viejos, se refrescan solos en ese momento -- para no ver "hace 30000 min".
+const AUTO_REFRESH_MS = 5 * 60 * 1000;
+const STALE_ON_RETURN_MS = 3 * 60 * 1000;
+
+setInterval(() => {
+  if (document.visibilityState !== 'visible') return;
+  if (!getCode() || sessionExpired()) return;
+  fetchMode(state.primary + '_' + state.institucion);
+  fetchMode('intervenciones_' + sidebarInst, true);
+}, AUTO_REFRESH_MS);
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'visible') return;
+  if (!getCode() || sessionExpired()) return;
+  touchActivity();
+  const mode = state.primary + '_' + state.institucion;
+  const cached = getCachedGroups(mode);
+  if (!cached || (Date.now() - cached.ts) > STALE_ON_RETURN_MS) fetchMode(mode);
+  const sMode = 'intervenciones_' + sidebarInst;
+  const sCached = getCachedGroups(sMode);
+  if (!sCached || (Date.now() - sCached.ts) > STALE_ON_RETURN_MS) fetchMode(sMode, true);
+});
+
 function renderNextPage() {
   const toShow = state.groups.slice(state.renderedCount, state.renderedCount + PAGE_SIZE);
   if (state.renderedCount === 0) contentEl.innerHTML = '';
@@ -532,7 +562,8 @@ function renderCard(p, date, groupWrap) {
       activePasteCtx = {
         p: p,
         thumbRow: imgPanel.querySelector('.thumb-row'),
-        addTile: imgPanel.querySelector('.thumb-add'),
+        addTile: imgPanel.querySelector('.thumb-add-wrap'),
+        progressEl: imgPanel.querySelector('.upload-progress'),
       };
     } else if (activePasteCtx && activePasteCtx.p === p) {
       activePasteCtx = null;
@@ -565,7 +596,7 @@ window.addEventListener('paste', (e) => {
     if (item.type.indexOf('image') === 0) {
       found = true;
       showToast('Imagen detectada, subiendo…');
-      handleImageUploadFile(item.getAsFile(), activePasteCtx.p, activePasteCtx.thumbRow, activePasteCtx.addTile);
+      handleImageUploadFile(item.getAsFile(), activePasteCtx.p, activePasteCtx.thumbRow, activePasteCtx.addTile, activePasteCtx.progressEl);
       e.preventDefault();
       break;
     }
@@ -585,23 +616,52 @@ function buildImgPanel(panel, p) {
     thumbRow.appendChild(im);
   });
 
-  const addTile = document.createElement('div');
-  addTile.className = 'thumb-add';
-  addTile.textContent = '+';
-  const fileInput = document.createElement('input');
-  fileInput.type = 'file';
-  fileInput.accept = 'image/*';
-  // sin "capture": así el celular muestra el picker completo (cámara o galería), no solo cámara.
-  fileInput.style.display = 'none';
-  addTile.addEventListener('click', () => fileInput.click());
-  fileInput.addEventListener('change', () => {
-    const file = fileInput.files[0];
-    if (file) handleImageUploadFile(file, p, thumbRow, addTile);
-    fileInput.value = '';
+  // Dos botones separados porque en varios navegadores de celular un solo <input file>
+  // solo ofrece UNA opción (cámara o galería) según si trae el atributo "capture" o no.
+  const addWrap = document.createElement('div');
+  addWrap.className = 'thumb-add-wrap';
+
+  const progressEl = document.createElement('span');
+  progressEl.className = 'upload-progress';
+
+  const cameraTile = document.createElement('div');
+  cameraTile.className = 'thumb-add';
+  cameraTile.textContent = '📷';
+  cameraTile.title = 'Tomar foto';
+  const cameraInput = document.createElement('input');
+  cameraInput.type = 'file';
+  cameraInput.accept = 'image/*';
+  cameraInput.capture = 'environment';
+  cameraInput.style.display = 'none';
+  cameraTile.addEventListener('click', () => cameraInput.click());
+  cameraInput.addEventListener('change', () => {
+    const file = cameraInput.files[0];
+    if (file) handleImageUploadFile(file, p, thumbRow, addWrap, progressEl);
+    cameraInput.value = '';
   });
 
-  thumbRow.appendChild(addTile);
-  thumbRow.appendChild(fileInput);
+  const galleryTile = document.createElement('div');
+  galleryTile.className = 'thumb-add';
+  galleryTile.textContent = '🖼';
+  galleryTile.title = 'Subir de galería';
+  const galleryInput = document.createElement('input');
+  galleryInput.type = 'file';
+  galleryInput.accept = 'image/*';
+  galleryInput.style.display = 'none';
+  galleryTile.addEventListener('click', () => galleryInput.click());
+  galleryInput.addEventListener('change', () => {
+    const file = galleryInput.files[0];
+    if (file) handleImageUploadFile(file, p, thumbRow, addWrap, progressEl);
+    galleryInput.value = '';
+  });
+
+  addWrap.appendChild(cameraTile);
+  addWrap.appendChild(cameraInput);
+  addWrap.appendChild(galleryTile);
+  addWrap.appendChild(galleryInput);
+  addWrap.appendChild(progressEl);
+
+  thumbRow.appendChild(addWrap);
   panel.appendChild(thumbRow);
 
   const hint = document.createElement('p');
@@ -658,24 +718,39 @@ function makeLinkEl(url, label, tag) {
   return a;
 }
 
-async function handleImageUploadFile(file, p, thumbRow, addTile) {
+// POST con seguimiento real de progreso de subida (fetch no lo da de forma confiable en todos los navegadores).
+function postWithProgress(bodyObj, onProgress) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', API_URL, true);
+    xhr.setRequestHeader('Content-Type', 'text/plain;charset=utf-8'); // evita preflight CORS
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable && onProgress) onProgress(Math.round((e.loaded / e.total) * 100));
+    };
+    xhr.onload = () => {
+      try { resolve(JSON.parse(xhr.responseText)); }
+      catch (err) { reject(new Error('respuesta_invalida')); }
+    };
+    xhr.onerror = () => reject(new Error('error_de_red'));
+    xhr.send(JSON.stringify(bodyObj));
+  });
+}
+
+async function handleImageUploadFile(file, p, thumbRow, addTile, progressEl) {
   if (!file || !p || !thumbRow || !addTile) return;
-  addTile.textContent = '…';
+  addTile.classList.add('busy');
+  if (progressEl) progressEl.textContent = 'Preparando…';
   try {
     const base64 = await fileToBase64(file);
-    const res = await fetch(API_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'text/plain;charset=utf-8' }, // evita preflight CORS
-      body: JSON.stringify({
-        action: 'upload_image',
-        code: getCode(),
-        patientId: p.id,
-        filename: file.name,
-        mimeType: file.type,
-        base64: base64,
-      }),
-    });
-    const data = await res.json();
+    if (progressEl) progressEl.textContent = 'Subiendo 0%';
+    const data = await postWithProgress({
+      action: 'upload_image',
+      code: getCode(),
+      patientId: p.id,
+      filename: file.name,
+      mimeType: file.type,
+      base64: base64,
+    }, (pct) => { if (progressEl) progressEl.textContent = 'Subiendo ' + pct + '%'; });
     if (data.error === 'codigo_invalido' || data.error === 'No autorizado') { rejectCode(); return; }
     if (!data.ok) throw new Error(data.error);
     const im = document.createElement('img');
@@ -689,7 +764,8 @@ async function handleImageUploadFile(file, p, thumbRow, addTile) {
   } catch (err) {
     showToast('Error al subir la imagen: ' + err, true);
   } finally {
-    addTile.textContent = '+';
+    addTile.classList.remove('busy');
+    if (progressEl) progressEl.textContent = '';
   }
 }
 
