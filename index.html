@@ -82,6 +82,9 @@
   .hero-wrap.has-img { display: block; }
   .hero-img { width: 100%; max-height: 320px; object-fit: contain; background: #000; border-radius: 10px; cursor: zoom-in; display: block; }
 
+  .links-wrap { display: none; flex-direction: column; gap: 6px; margin-top: 8px; }
+  .links-wrap.has-links { display: flex; }
+
   .thumb-row { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px; margin-bottom: 10px; }
   .thumb { width: 60px; height: 60px; border-radius: 8px; object-fit: cover; flex-shrink: 0; background: var(--accent-bg); }
   .thumb-add {
@@ -186,7 +189,7 @@ const API_URL = 'https://script.google.com/macros/s/AKfycbwEjfZ8lcHxVKtTCFDKeQEM
 
 // Súbelo cada vez que edites este archivo, así el numerito de abajo a la derecha
 // te dice si el navegador ya tiene la versión que acabas de subir a GitHub Pages.
-const APP_VERSION = '2026-08-14.1';
+const APP_VERSION = '2026-08-14.2';
 document.getElementById('version-tag').textContent = 'v' + APP_VERSION;
 
 const PAGE_SIZE = 4; // cuántos grupos de fecha se muestran por "página" del scroll
@@ -523,6 +526,7 @@ function renderCard(p, date, groupWrap) {
         <span class="nota-saved">Guardado</span>
       </div>
       <div class="hero-wrap"></div>
+      <div class="links-wrap"></div>
       <div class="img-toggle">
         <span>Imágenes</span>
         <span class="chev">▾</span>
@@ -533,6 +537,9 @@ function renderCard(p, date, groupWrap) {
 
   const heroWrap = card.querySelector('.hero-wrap');
   renderHeroImage(heroWrap, p); // se ve de una vez al abrir la tarjeta, sin tener que abrir "Imágenes"
+
+  const linksWrap = card.querySelector('.links-wrap');
+  renderLinksList(linksWrap, p); // igual los links: visibles de una vez, sin abrir el toggle
 
   card.querySelector('.card-summary').addEventListener('click', () => {
     card.classList.toggle('open');
@@ -567,7 +574,7 @@ function renderCard(p, date, groupWrap) {
     const opening = !imgPanel.classList.contains('open');
     imgPanel.classList.toggle('open');
     imgToggle.querySelector('.chev').style.transform = opening ? 'rotate(180deg)' : '';
-    if (!imgPanelBuilt) { buildImgPanel(imgPanel, p, heroWrap); imgPanelBuilt = true; }
+    if (!imgPanelBuilt) { buildImgPanel(imgPanel, p, heroWrap, linksWrap); imgPanelBuilt = true; }
     if (opening) {
       imgPanel.focus();
       // "Arma" este paciente como destino del próximo Ctrl+V (ver listener global de paste)
@@ -631,7 +638,18 @@ function renderHeroImage(heroWrap, p) {
   heroWrap.appendChild(img);
 }
 
-function buildImgPanel(panel, p, heroWrap) {
+// Igual que renderHeroImage pero para links (DICOM + los agregados) -- visibles siempre, abajo de la foto.
+function renderLinksList(linksWrap, p) {
+  linksWrap.innerHTML = '';
+  const items = [];
+  if (p.dicomLinkSheet) items.push({ url: p.dicomLinkSheet, label: 'DICOM viewer', tag: 'sheet' });
+  (p.links || []).forEach(l => items.push({ url: l.url, label: l.label || l.url, tag: l.origen || '' }));
+  if (!items.length) { linksWrap.classList.remove('has-links'); return; }
+  linksWrap.classList.add('has-links');
+  items.forEach(l => linksWrap.appendChild(makeLinkEl(l.url, l.label, l.tag)));
+}
+
+function buildImgPanel(panel, p, heroWrap, linksWrap) {
   const thumbRow = document.createElement('div');
   thumbRow.className = 'thumb-row';
 
@@ -696,22 +714,15 @@ function buildImgPanel(panel, p, heroWrap) {
   hint.textContent = 'En computadora: con este cuadro seleccionado, Ctrl+V pega un screenshot directo.';
   panel.appendChild(hint);
 
-  const linkList = document.createElement('div');
-  linkList.className = 'link-list';
-
-  if (p.dicomLinkSheet) {
-    linkList.appendChild(makeLinkEl(p.dicomLinkSheet, 'DICOM viewer', 'sheet'));
-  }
-  (p.links || []).forEach(l => linkList.appendChild(makeLinkEl(l.url, l.label || l.url, l.origen || '')));
-
+  // La lista de links ya no se pinta aquí -- vive en linksWrap, siempre visible abajo de la foto.
+  // Aquí solo queda el cuadro para agregar uno nuevo.
   const addRow = document.createElement('div');
   addRow.className = 'link-add-row';
   addRow.innerHTML = `<input type="text" placeholder="Pega un link…"><button>Agregar</button>`;
   const input = addRow.querySelector('input');
   const btn = addRow.querySelector('button');
-  btn.addEventListener('click', () => handleAddLink(input, p, linkList));
+  btn.addEventListener('click', () => handleAddLink(input, p, linksWrap));
 
-  panel.appendChild(linkList);
   panel.appendChild(addRow);
 }
 
@@ -797,7 +808,7 @@ async function handleImageUploadFile(file, p, thumbRow, addTile, progressEl, her
   }
 }
 
-async function handleAddLink(input, p, linkList) {
+async function handleAddLink(input, p, linksWrap) {
   const url = input.value.trim();
   if (!url) return;
   try {
@@ -809,8 +820,8 @@ async function handleAddLink(input, p, linkList) {
     const data = await res.json();
     if (data.error === 'codigo_invalido' || data.error === 'No autorizado') { rejectCode(); return; }
     if (!data.ok) throw new Error(data.error);
-    linkList.appendChild(makeLinkEl(url, url, 'app'));
     p.links = (p.links || []).concat([{ url: url, label: url, origen: 'app' }]);
+    if (linksWrap) renderLinksList(linksWrap, p);
     touchCacheForCurrentMode();
     input.value = '';
   } catch (err) {
