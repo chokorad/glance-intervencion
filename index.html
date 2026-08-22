@@ -189,7 +189,7 @@ const API_URL = 'https://script.google.com/macros/s/AKfycbwEjfZ8lcHxVKtTCFDKeQEM
 
 // Súbelo cada vez que edites este archivo, así el numerito de abajo a la derecha
 // te dice si el navegador ya tiene la versión que acabas de subir a GitHub Pages.
-const APP_VERSION = '2026-08-14.2';
+const APP_VERSION = '2026-08-14.3';
 document.getElementById('version-tag').textContent = 'v' + APP_VERSION;
 
 const PAGE_SIZE = 4; // cuántos grupos de fecha se muestran por "página" del scroll
@@ -338,9 +338,37 @@ if (getCode() && !sessionExpired()) {
 }
 
 function renderGroups(groups) {
+  // Antes de repintar: guarda qué tarjetas y qué panel de "Imágenes" estaban abiertos,
+  // cuántas páginas del scroll infinito ya se habían cargado, y el scroll -- para que
+  // sincronizar (↻) no te cierre lo que ya tenías abierto en pantalla.
+  const openKeys = new Set();
+  const imgOpenKeys = new Set();
+  contentEl.querySelectorAll('.card.open').forEach(c => openKeys.add(c.dataset.key));
+  contentEl.querySelectorAll('.img-panel.open').forEach(panel => {
+    const card = panel.closest('.card');
+    if (card) imgOpenKeys.add(card.dataset.key);
+  });
+  const prevRendered = state.renderedCount || 0;
+  const scrollY = window.scrollY;
+
   state.groups = groups || [];
   state.renderedCount = 0;
   renderNextPage();
+  while (state.renderedCount < prevRendered && state.renderedCount < state.groups.length) {
+    renderNextPage();
+  }
+
+  if (openKeys.size || imgOpenKeys.size) {
+    contentEl.querySelectorAll('.card').forEach(card => {
+      const key = card.dataset.key;
+      if (openKeys.has(key)) card.classList.add('open');
+      if (imgOpenKeys.has(key)) {
+        const toggle = card.querySelector('.img-toggle');
+        if (toggle) toggle.click(); // reconstruye y abre el panel (incluye armar Ctrl+V)
+      }
+    });
+  }
+  if (scrollY) window.scrollTo(0, scrollY);
 }
 
 // silent=true -> no muestra "Cargando" ni pisa lo que se ve (se usa para el prefetch en segundo plano)
@@ -400,28 +428,8 @@ document.querySelectorAll('#sidebar [data-inst]').forEach(btn => {
   });
 });
 
-// ============================= AUTO-REFRESH (cada tanto, sin ser cada 2 segundos) =============================
-// Mientras la pestaña está abierta y visible: refresca sola cada 5 min.
-// Los celulares "pausan" el JS de una pestaña en segundo plano, así que además,
-// cuando vuelves a esa pestaña (visibilitychange), si los datos ya tienen más de
-// 3 min de viejos, se refrescan solos en ese momento -- para no ver "hace 30000 min".
-const AUTO_REFRESH_MS = 5 * 60 * 1000;
-const STALE_ON_RETURN_MS = 3 * 60 * 1000;
-
-setInterval(() => {
-  if (document.visibilityState !== 'visible') return;
-  if (!getCode() || sessionExpired()) return;
-  refreshAllModes();
-}, AUTO_REFRESH_MS);
-
-document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState !== 'visible') return;
-  if (!getCode() || sessionExpired()) return;
-  touchActivity();
-  const mode = state.primary + '_' + state.institucion;
-  const cached = getCachedGroups(mode);
-  if (!cached || (Date.now() - cached.ts) > STALE_ON_RETURN_MS) refreshAllModes();
-});
+// Sin auto-refresh por tiempo/visibilidad: solo se sincroniza cuando picas ↻ (o al abrir la app).
+// Así nunca te cierra lo que tienes abierto sin que tú lo pidas.
 
 function renderNextPage() {
   const toShow = state.groups.slice(state.renderedCount, state.renderedCount + PAGE_SIZE);
@@ -756,39 +764,35 @@ function makeLinkEl(url, label, tag) {
   return a;
 }
 
-// POST con seguimiento real de progreso de subida (fetch no lo da de forma confiable en todos los navegadores).
-function postWithProgress(bodyObj, onProgress) {
-  return new Promise((resolve, reject) => {
-    const xhr = new XMLHttpRequest();
-    xhr.open('POST', API_URL, true);
-    xhr.setRequestHeader('Content-Type', 'text/plain;charset=utf-8'); // evita preflight CORS
-    xhr.upload.onprogress = (e) => {
-      if (e.lengthComputable && onProgress) onProgress(Math.round((e.loaded / e.total) * 100));
-    };
-    xhr.onload = () => {
-      try { resolve(JSON.parse(xhr.responseText)); }
-      catch (err) { reject(new Error('respuesta_invalida')); }
-    };
-    xhr.onerror = () => reject(new Error('error_de_red'));
-    xhr.send(JSON.stringify(bodyObj));
-  });
-}
-
 async function handleImageUploadFile(file, p, thumbRow, addTile, progressEl, heroWrap) {
   if (!file || !p || !thumbRow || !addTile) return;
   addTile.classList.add('busy');
   if (progressEl) progressEl.textContent = 'Preparando…';
+  // Google Apps Script responde con una redirección a googleusercontent.com, y esa segunda
+  // respuesta no siempre trae los headers CORS que XMLHttpRequest exige -> "error_de_red" ahí.
+  // fetch() sí la tolera bien (por eso el resto de la app ya usaba fetch), así que subimos así también.
+  // No hay progreso real por bytes con fetch, así que mostramos segundos transcurridos.
+  let seconds = 0;
+  const timer = setInterval(() => {
+    seconds++;
+    if (progressEl) progressEl.textContent = 'Subiendo… ' + seconds + 's';
+  }, 1000);
   try {
     const base64 = await fileToBase64(file);
-    if (progressEl) progressEl.textContent = 'Subiendo 0%';
-    const data = await postWithProgress({
-      action: 'upload_image',
-      code: getCode(),
-      patientId: p.id,
-      filename: file.name,
-      mimeType: file.type,
-      base64: base64,
-    }, (pct) => { if (progressEl) progressEl.textContent = 'Subiendo ' + pct + '%'; });
+    if (progressEl) progressEl.textContent = 'Subiendo…';
+    const res = await fetch(API_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' }, // evita preflight CORS
+      body: JSON.stringify({
+        action: 'upload_image',
+        code: getCode(),
+        patientId: p.id,
+        filename: file.name,
+        mimeType: file.type,
+        base64: base64,
+      }),
+    });
+    const data = await res.json();
     if (data.error === 'codigo_invalido' || data.error === 'No autorizado') { rejectCode(); return; }
     if (!data.ok) throw new Error(data.error);
     const im = document.createElement('img');
@@ -803,6 +807,7 @@ async function handleImageUploadFile(file, p, thumbRow, addTile, progressEl, her
   } catch (err) {
     showToast('Error al subir la imagen: ' + err, true);
   } finally {
+    clearInterval(timer);
     addTile.classList.remove('busy');
     if (progressEl) progressEl.textContent = '';
   }
