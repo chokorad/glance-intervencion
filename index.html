@@ -4,6 +4,16 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
 <title>Seguimiento Intervención</title>
+
+<!-- PWA: hace que "Agregar a pantalla de inicio" abra en modo standalone (sin barra del navegador) -->
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#f4f4f2">
+<link rel="icon" href="icon-192.png">
+<!-- iOS no usa manifest.json para esto -- necesita estas etiquetas aparte -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Glance Interv.">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
 <style>
   :root {
     --bg: #f4f4f2;
@@ -189,8 +199,16 @@ const API_URL = 'https://script.google.com/macros/s/AKfycbwEjfZ8lcHxVKtTCFDKeQEM
 
 // Súbelo cada vez que edites este archivo, así el numerito de abajo a la derecha
 // te dice si el navegador ya tiene la versión que acabas de subir a GitHub Pages.
-const APP_VERSION = '2026-08-14.3';
+const APP_VERSION = '2026-08-15.2';
 document.getElementById('version-tag').textContent = 'v' + APP_VERSION;
+
+// Registra el service worker mínimo (ver sw.js) -- ayuda a que el ícono de pantalla de
+// inicio abra en modo standalone otra vez, en vez de como pestaña normal del navegador.
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('sw.js').catch(() => {});
+  });
+}
 
 const PAGE_SIZE = 4; // cuántos grupos de fecha se muestran por "página" del scroll
 
