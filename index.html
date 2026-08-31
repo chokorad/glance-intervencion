@@ -58,6 +58,7 @@
 
   .date-header { font-size: 12px; color: var(--text-muted); margin: 18px 2px 6px; text-transform: capitalize; }
   .date-header:first-of-type { margin-top: 0; }
+  .date-header.today { color: var(--accent); font-weight: 700; font-size: 13px; }
 
   .card { border: 1px solid var(--border); border-radius: 12px; background: var(--surface); margin-bottom: 8px; overflow: hidden; }
   .card-summary { display: flex; align-items: center; gap: 10px; padding: 11px; cursor: pointer; }
@@ -145,11 +146,20 @@
     padding: 5px 9px; border-radius: 6px; margin: 16px 0 8px; text-transform: capitalize;
   }
   .sidebar-date:first-of-type { margin-top: 0; }
+  .sidebar-date.today { background: var(--accent); color: #fff; }
   .sidebar-row { padding: 6px 2px; border-top: 1px solid var(--border); }
   .sidebar-row:first-of-type { border-top: none; }
   .sidebar-name { display: block; font-size: 12px; font-weight: 500; }
   .sidebar-proc { display: block; font-size: 11px; color: var(--text-secondary); }
   .sidebar-empty { font-size: 12px; color: var(--text-muted); }
+
+  .hosp-row { padding: 7px 2px; border-top: 1px solid var(--border); }
+  .hosp-row:first-of-type { border-top: none; }
+  .hosp-row-top { display: flex; align-items: baseline; gap: 6px; }
+  .hosp-name { font-size: 12px; font-weight: 600; }
+  .hosp-cama { font-size: 10.5px; color: var(--accent); background: var(--accent-bg); padding: 1px 6px; border-radius: 5px; margin-left: auto; white-space: nowrap; }
+  .hosp-diag { display: block; font-size: 11px; color: var(--text-secondary); margin-top: 2px; }
+  .hosp-pend { display: block; font-size: 11px; color: var(--text-muted); margin-top: 1px; }
 </style>
 </head>
 <body>
@@ -179,6 +189,15 @@
 </div>
 
 <div class="sidebar" id="sidebar">
+  <div class="sidebar-card" id="hosp-card" style="margin-bottom: 12px;">
+    <p class="sidebar-title">Hospitalizados</p>
+    <div class="sidebar-toggle">
+      <button data-hosp-inst="issste" class="active">ISSSTE</button>
+      <button data-hosp-inst="chisssmecali">ISSSTECali</button>
+    </div>
+    <div id="hosp-list"><p class="sidebar-empty">Cargando…</p></div>
+  </div>
+
   <div class="sidebar-card">
     <p class="sidebar-title">Upcoming</p>
     <div class="sidebar-toggle">
@@ -199,7 +218,7 @@ const API_URL = 'https://script.google.com/macros/s/AKfycbwEjfZ8lcHxVKtTCFDKeQEM
 
 // Súbelo cada vez que edites este archivo, así el numerito de abajo a la derecha
 // te dice si el navegador ya tiene la versión que acabas de subir a GitHub Pages.
-const APP_VERSION = '2026-08-15.3';
+const APP_VERSION = '2026-08-25.1';
 document.getElementById('version-tag').textContent = 'v' + APP_VERSION;
 
 // Registra el service worker mínimo (ver sw.js) -- ayuda a que el ícono de pantalla de
@@ -223,6 +242,7 @@ let state = {
 // Declarado aquí arriba (no más abajo) porque showApp() puede llamar a renderSidebar()
 // de forma síncrona antes de que el script termine de correr todo lo de abajo.
 let sidebarInst = 'issste';
+let hospInst = 'issste';
 
 const contentEl = document.getElementById('content');
 
@@ -241,8 +261,7 @@ document.getElementById('refresh-btn').addEventListener('click', (e) => {
 // no solo la que está viendo ahorita -- así al cambiar de tab ya está fresca, no solo la activa.
 function refreshAllModes() {
   const current = state.primary + '_' + state.institucion;
-  const all = ['consulta_issste', 'consulta_chisssmecali', 'intervenciones_issste', 'intervenciones_chisssmecali'];
-  all.forEach(m => fetchMode(m, m !== current));
+  ALL_MODES.forEach(m => fetchMode(m, m !== current));
 }
 
 // ============================= CACHE (evita recargar por red al cambiar de tab) =============================
@@ -287,13 +306,7 @@ function onModeChange() {
   }
 }
 
-// Trae las otras 3 vistas en segundo plano (sin bloquear ni mostrar "Cargando") para que
-// ya estén listas si la conexión falla más tarde durante la consulta.
-function prefetchOtherModes() {
-  const all = ['consulta_issste', 'consulta_chisssmecali', 'intervenciones_issste', 'intervenciones_chisssmecali'];
-  const current = state.primary + '_' + state.institucion;
-  all.forEach(m => { if (m !== current && !getCachedGroups(m)) fetchMode(m, true); });
-}
+const ALL_MODES = ['consulta_issste', 'consulta_chisssmecali', 'intervenciones_issste', 'intervenciones_chisssmecali', 'hosp_issste', 'hosp_chisssmecali'];
 
 // ============================= GATE (PIN) =============================
 const CODE_KEY = 'glance_access_code';
@@ -319,8 +332,11 @@ function showApp() {
   gateEl.style.display = 'none';
   layoutEl.style.display = 'flex';
   onModeChange();
-  renderSidebar(); // pinta lo que ya haya en caché de inmediato
-  setTimeout(prefetchOtherModes, 1000); // deja que la vista actual cargue primero
+  renderSidebar();   // pinta lo que ya haya en caché de inmediato
+  renderHospPanel();  // idem
+  // Cada que se abre la app: siempre trae todo fresco del servidor (ignora qué tan vieja
+  // esté la caché) -- después de esto, ya no se vuelve a tocar la red sola, solo con ↻.
+  setTimeout(refreshAllModes, 300);
 }
 
 document.getElementById('gate-btn').addEventListener('click', tryEnter);
@@ -404,6 +420,7 @@ async function fetchMode(mode, silent) {
       showCacheNote(Date.now());
     }
     if (mode === 'intervenciones_' + sidebarInst) renderSidebar();
+    if (mode === 'hosp_' + hospInst) renderHospPanel();
   } catch (err) {
     if (!silent && isCurrent) contentEl.innerHTML = '<div class="empty">No se pudo cargar. ' + escapeHtml(String(err)) + '</div>';
   }
@@ -427,7 +444,8 @@ function renderSidebar() {
   cached.groups.forEach(group => {
     const h = document.createElement('p');
     h.className = 'sidebar-date';
-    h.textContent = formatDateLabel(group.date);
+    if (group.date === todayKey()) { h.classList.add('today'); h.textContent = formatDateLabel(group.date) + ' · Hoy'; }
+    else h.textContent = formatDateLabel(group.date);
     list.appendChild(h);
     group.patients.forEach(p => {
       const row = document.createElement('div');
@@ -446,6 +464,45 @@ document.querySelectorAll('#sidebar [data-inst]').forEach(btn => {
   });
 });
 
+// ============================= PANEL "HOSPITALIZADOS" (lista plana, solo lectura) =============================
+function renderHospPanel() {
+  const mode = 'hosp_' + hospInst;
+  const cached = getCachedGroups(mode);
+  const list = document.getElementById('hosp-list');
+  if (!cached) {
+    list.innerHTML = '<p class="sidebar-empty">Cargando…</p>';
+    fetchMode(mode, true);
+    return;
+  }
+  const patients = cached.groups || []; // el backend regresa una lista plana, no agrupada por fecha
+  if (!patients.length) {
+    list.innerHTML = '<p class="sidebar-empty">Nadie hospitalizado ahorita.</p>';
+    return;
+  }
+  list.innerHTML = '';
+  patients.forEach(p => {
+    const row = document.createElement('div');
+    row.className = 'hosp-row';
+    row.innerHTML = `
+      <div class="hosp-row-top">
+        <span class="hosp-name">${escapeHtml(p.nombre)}${p.edad ? ', ' + escapeHtml(String(p.edad)) : ''}</span>
+        ${p.cama ? `<span class="hosp-cama">Cama ${escapeHtml(String(p.cama))}</span>` : ''}
+      </div>
+      ${p.diagnostico ? `<span class="hosp-diag">${escapeHtml(p.diagnostico)}</span>` : ''}
+      ${p.pendientes ? `<span class="hosp-pend">Pendiente: ${escapeHtml(p.pendientes)}</span>` : ''}
+    `;
+    list.appendChild(row);
+  });
+}
+
+document.querySelectorAll('#hosp-card [data-hosp-inst]').forEach(btn => {
+  btn.addEventListener('click', () => {
+    hospInst = btn.dataset.hospInst;
+    document.querySelectorAll('#hosp-card [data-hosp-inst]').forEach(b => b.classList.toggle('active', b.dataset.hospInst === hospInst));
+    renderHospPanel();
+  });
+});
+
 // Sin auto-refresh por tiempo/visibilidad: solo se sincroniza cuando picas ↻ (o al abrir la app).
 // Así nunca te cierra lo que tienes abierto sin que tú lo pidas.
 
@@ -459,7 +516,8 @@ function renderNextPage() {
   toShow.forEach(group => {
     const header = document.createElement('div');
     header.className = 'date-header';
-    header.textContent = formatDateLabel(group.date);
+    if (group.date === todayKey()) { header.classList.add('today'); header.textContent = formatDateLabel(group.date) + ' · Hoy'; }
+    else header.textContent = formatDateLabel(group.date);
     contentEl.appendChild(header);
 
     const groupWrap = document.createElement('div');
@@ -859,6 +917,13 @@ function fileToBase64(file) {
     reader.onerror = reject;
     reader.readAsDataURL(file);
   });
+}
+
+// Fecha de hoy en el mismo formato yyyy-MM-dd que usa el backend para las "date keys" --
+// se compara contra la del navegador (hora local del que abre la app).
+function todayKey() {
+  const d = new Date();
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
 }
 
 function formatDateLabel(dateStr) {
