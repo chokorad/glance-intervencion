@@ -218,7 +218,7 @@ const API_URL = 'https://script.google.com/macros/s/AKfycbwEjfZ8lcHxVKtTCFDKeQEM
 
 // Súbelo cada vez que edites este archivo, así el numerito de abajo a la derecha
 // te dice si el navegador ya tiene la versión que acabas de subir a GitHub Pages.
-const APP_VERSION = '2026-08-25.1';
+const APP_VERSION = '2026-08-25.2';
 document.getElementById('version-tag').textContent = 'v' + APP_VERSION;
 
 // Registra el service worker mínimo (ver sw.js) -- ayuda a que el ícono de pantalla de
@@ -257,11 +257,16 @@ document.getElementById('refresh-btn').addEventListener('click', (e) => {
   refreshAllModes();
 });
 
-// Refresca las 4 combinaciones (Consulta/Intervenciones x ISSSTE/ISSSTECali) de una vez,
-// no solo la que está viendo ahorita -- así al cambiar de tab ya está fresca, no solo la activa.
+// Refresca las 6 combinaciones (Consulta/Intervenciones/Hospitalizados x ISSSTE/ISSSTECali) de
+// una vez, no solo la que está viendo ahorita -- así al cambiar de tab ya está fresca.
+// Escalonadas (no todas en el mismo instante): mandar 6 peticiones simultáneas al Web App de
+// Apps Script a veces hace que truene una por saturación -- eso dejaba paneles pegados en
+// "Cargando…" sin avisar. Separarlas un poco evita eso.
 function refreshAllModes() {
   const current = state.primary + '_' + state.institucion;
-  ALL_MODES.forEach(m => fetchMode(m, m !== current));
+  ALL_MODES.forEach((m, i) => {
+    setTimeout(() => fetchMode(m, m !== current), i * 250);
+  });
 }
 
 // ============================= CACHE (evita recargar por red al cambiar de tab) =============================
@@ -405,8 +410,11 @@ function renderGroups(groups) {
   if (scrollY) window.scrollTo(0, scrollY);
 }
 
-// silent=true -> no muestra "Cargando" ni pisa lo que se ve (se usa para el prefetch en segundo plano)
-async function fetchMode(mode, silent) {
+// silent=true -> no muestra "Cargando" en el contenido principal ni lo pisa (se usa para el
+// refresco de fondo). Pero un error YA NO se queda callado: si el panel de Upcoming o de
+// Hospitalizados estaba esperando esos datos (sin caché todavía), se le avisa y se reintenta
+// una vez solo -- antes se quedaban pegados en "Cargando…" para siempre sin decir por qué.
+async function fetchMode(mode, silent, isRetry) {
   const isCurrent = mode === (state.primary + '_' + state.institucion);
   if (!silent && isCurrent) contentEl.innerHTML = '<div class="loading">Cargando…</div>';
   try {
@@ -422,7 +430,17 @@ async function fetchMode(mode, silent) {
     if (mode === 'intervenciones_' + sidebarInst) renderSidebar();
     if (mode === 'hosp_' + hospInst) renderHospPanel();
   } catch (err) {
-    if (!silent && isCurrent) contentEl.innerHTML = '<div class="empty">No se pudo cargar. ' + escapeHtml(String(err)) + '</div>';
+    if (!silent && isCurrent) {
+      contentEl.innerHTML = '<div class="empty">No se pudo cargar. ' + escapeHtml(String(err)) + '</div>';
+    }
+    if (mode === 'intervenciones_' + sidebarInst && !getCachedGroups(mode)) {
+      if (!isRetry) { setTimeout(() => fetchMode(mode, true, true), 3000); return; }
+      document.getElementById('sidebar-list').innerHTML = '<p class="sidebar-empty">No se pudo cargar (' + escapeHtml(String(err)) + '). Toca ↻ para reintentar.</p>';
+    }
+    if (mode === 'hosp_' + hospInst && !getCachedGroups(mode)) {
+      if (!isRetry) { setTimeout(() => fetchMode(mode, true, true), 3000); return; }
+      document.getElementById('hosp-list').innerHTML = '<p class="sidebar-empty">No se pudo cargar (' + escapeHtml(String(err)) + '). Toca ↻ para reintentar.</p>';
+    }
   }
 }
 
